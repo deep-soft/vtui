@@ -389,15 +389,11 @@ func openFace(path string, size, dpi float64) (font.Face, error) {
 	if err != nil {
 		return nil, err
 	}
-	face, err := opentype.NewFace(f, &opentype.FaceOptions{
+	return opentype.NewFace(f, &opentype.FaceOptions{
 		Size:    size,
 		DPI:     dpi,
 		Hinting: font.HintingFull,
 	})
-	if err != nil {
-		return nil, err
-	}
-	return wrapGUIFace(path, face, size, dpi), nil
 }
 
 type fallbackFace struct {
