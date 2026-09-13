@@ -209,6 +209,14 @@ func (c *fontFallbackChain) faceFor(r rune) any {
 		return f
 	}
 	f := c.resolveLocked(r)
+	if f == nil {
+		// The end of the walk is the one answer the log never carried:
+		// "no fallback for U+0710" and "the fallback was found and then
+		// dropped" left the same silence behind them. Memoisation keeps
+		// this to one line per rune.
+		DebugLog("%s: no font renders U+%04X (%s), %d fonts consulted",
+			c.logTag, r, scriptNameForRune(r), len(c.entries))
+	}
 	if c.resolved == nil {
 		c.resolved = make(map[rune]any, 256)
 	}
