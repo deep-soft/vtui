@@ -861,6 +861,10 @@ func isGhostProneText(ch uint64) bool {
 // go-runewidth widens Cyrillic in an East Asian locale, the terminal need not.
 func cellAdvanceTrusted(ch uint64, wide bool) bool {
 	switch {
+	case IsFreeBSDSyscons:
+		// The renderer writes exactly one byte per column there and the
+		// console advances one column per byte (syscons_text.go).
+		return true
 	case wide:
 		return false
 	case ch < 0x80:
@@ -989,6 +993,9 @@ func (r *AnsiRenderer) Render(buf, shadow []CharInfo, w, h int, force bool) {
 				r.frameOut.WriteByte(' ')
 			} else if char < 0x80 {
 				r.frameOut.WriteByte(byte(char))
+			} else if IsFreeBSDSyscons {
+				// Every byte is a cell there: see syscons_text.go.
+				sysconsCell(&r.frameOut, char, x+1 < w && buf[idx+1].Char == WideCharFiller)
 			} else if IsCompChar(char) {
 				r.frameOut.WriteString(CellString(char))
 			} else {
