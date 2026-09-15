@@ -2,6 +2,7 @@ package vtui
 
 import (
 	"github.com/mattn/go-runewidth"
+	"sync/atomic"
 	"unicode"
 
 	"github.com/unxed/vtinput"
@@ -60,6 +61,26 @@ type VMenu struct {
 	ColorSelectedHighlightIdx int
 	ColorBoxIdx               int
 	ColorTitleIdx             int
+}
+
+// menuStopHeldArrowAtEdge holds the inverse of SetMenuLoopScroll, so that
+// the zero value keeps the behaviour menus always had: arrows loop.
+var menuStopHeldArrowAtEdge atomic.Bool
+
+// SetMenuLoopScroll is far2l's "Loop list scrolling" option (Menu settings;
+// Opt.VMenu.MenuLoopScroll, stored as [VMenu] MenuStopWrapOnEdge). On, the
+// default, Up on the first item and Down on the last wrap round the menu
+// even while the arrow is held. Off, a held arrow stops at the first or the
+// last item and only a separate press wraps, which is what Far Manager 3
+// always does. It concerns menus whose Wrap is set; the wheel and the page
+// keys stop at the ends either way.
+func SetMenuLoopScroll(loop bool) {
+	menuStopHeldArrowAtEdge.Store(!loop)
+}
+
+// MenuLoopScroll reports the value last given to SetMenuLoopScroll.
+func MenuLoopScroll() bool {
+	return !menuStopHeldArrowAtEdge.Load()
 }
 
 // NewVMenu creates a new vertical menu instance.
@@ -303,12 +324,12 @@ func (m *VMenu) ProcessKey(e *vtinput.InputEvent) bool {
 		if m.SelectPos == 0 && !isSubMenu && !m.Wrap {
 			return false
 		}
-		return m.HandleKey(e)
+		return m.handleArrowKey(e)
 	case vtinput.VK_DOWN:
 		if m.SelectPos == m.ItemCount-1 && !isSubMenu && !m.Wrap {
 			return false
 		}
-		return m.HandleKey(e)
+		return m.handleArrowKey(e)
 	// PgUp/PgDn fall through to HandleKey like Home/End do: HandleNavKey
 	// pages via PageBy, which clamps at the list ends even though Wrap is on.
 	case vtinput.VK_ESCAPE, vtinput.VK_F10:
@@ -387,6 +408,20 @@ func (m *VMenu) ProcessKey(e *vtinput.InputEvent) bool {
 		}
 	}
 
+	return m.HandleKey(e)
+}
+
+// handleArrowKey moves the selection for Up and Down. far2l's VMenu passes
+// stop_on_edge = IsRepeatedKey() && !Opt.VMenu.MenuLoopScroll for these keys
+// (Far Manager 3 passes IsRepeatedKey() alone): a wrapping menu stops at its
+// first or last item while the arrow is held, and keeps the key, so focus
+// does not leave the menu either. Wrap is lifted for that one move only, as
+// Far 3 clears VMENU_WRAPMODE around a single step.
+func (m *VMenu) handleArrowKey(e *vtinput.InputEvent) bool {
+	if m.Wrap && !MenuLoopScroll() && FrameManager != nil && FrameManager.IsRepeatedKey() {
+		m.Wrap = false
+		defer func() { m.Wrap = true }()
+	}
 	return m.HandleKey(e)
 }
 

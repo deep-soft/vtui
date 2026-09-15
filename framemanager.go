@@ -313,6 +313,10 @@ type frameManager struct {
 	eventSink              func(UIEvent)
 	eventSinkMu            sync.RWMutex
 	hostMode               bool
+
+	// keyRepeat classifies the key event being dispatched as a fresh press
+	// or an auto-repeat; see IsRepeatedKey.
+	keyRepeat keyRepeatState
 }
 
 // SetHostMode configures whether FrameManager keeps running when frames slice is initially empty (used by vtui-host).
@@ -754,6 +758,7 @@ func (fm *frameManager) Init(scr *ScreenBuf) {
 	fm.ActiveIdx = 0
 	fm.activationHistory = nil
 	fm.mousePositionKnown = false
+	fm.keyRepeat = keyRepeatState{}
 	fm.WorkspaceTabMode = WorkspaceTabsMultiple
 	fm.WorkspaceCtrlTabMode = WorkspaceCtrlTabDirect
 	fm.WorkspaceAltNumberSwitch = false
@@ -2808,6 +2813,7 @@ func (fm *frameManager) dispatchEvent(ev *vtinput.InputEvent, is_injected bool) 
 	if fm.isDuplicateMouseMove(ev) {
 		return false
 	}
+	fm.keyRepeat.observe(ev, is_injected)
 	DebugLog("FM_DISPATCH: Received event: %s", ev.String())
 	// Translator Tool: Ctrl+Alt+RightClick
 	if ev.Type == vtinput.MouseEventType && ev.ButtonState == vtinput.RightmostButtonPressed && ev.KeyDown {
