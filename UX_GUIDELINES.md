@@ -83,9 +83,9 @@ Hotkeys provide the fastest way to activate a specific function.
 #### Dropdowns (`ComboBox`)
 
 *   **Interaction:** Combines an `Edit` field with a hidden `VMenu`.
-*   **Activation:** `Alt+Down` or clicking the down arrow (`↓`) icon opens the list.
+*   **Activation:** `Ctrl+Down` or clicking the down arrow (`↓`) icon opens the list.
 *   **Selection:** Selecting an item from the list automatically populates the `Edit` field and returns focus to it.
-*   **`DropdownOnly` Mode:** If enabled, the user cannot type custom text and must select from the provided options using `Enter` or the mouse.
+*   **`DropdownOnly` Mode:** If enabled, the user cannot type custom text and must select from the provided options. As in `far2l`, `Enter` presses the dialog's default button; the list opens with `Ctrl+Down` or the mouse. Only when the dialog has no default button does `Enter` open the list.
 
 #### File Panels (`f4` Specific)
 
