@@ -1066,29 +1066,20 @@ func (e *Edit) OpenHistory() {
 	}
 
 	menu.OnKeyDown = func(ev *vtinput.InputEvent) bool {
-		// Handle deleting items from history
-		if ev.VirtualKeyCode == vtinput.VK_DELETE || ev.VirtualKeyCode == vtinput.VK_BACK {
-			if len(menu.Items) == 0 {
-				return true
-			}
-			idx := menu.SelectPos
-			e.History = append(e.History[:idx], e.History[idx+1:]...)
-			if e.HistoryID != "" && GlobalHistoryProvider != nil {
-				GlobalHistoryProvider.SaveHistory(e.HistoryID, e.History)
-			}
-			menu.Items = append(menu.Items[:idx], menu.Items[idx+1:]...)
-			menu.ItemCount = len(menu.Items)
+		shift := (ev.ControlKeyState & vtinput.ShiftPressed) != 0
+		ctrl := (ev.ControlKeyState & (vtinput.LeftCtrlPressed | vtinput.RightCtrlPressed)) != 0
+		alt := (ev.ControlKeyState & (vtinput.LeftAltPressed | vtinput.RightAltPressed)) != 0
 
-			if menu.SelectPos >= menu.ItemCount && menu.ItemCount > 0 {
-				menu.SetSelectPos(menu.ItemCount - 1)
-			} else if menu.ItemCount > 0 {
-				menu.SetSelectPos(menu.SelectPos) // Refresh view
-			}
-
-			if menu.ItemCount == 0 {
-				menu.Close()
-			}
-			FrameManager.Redraw()
+		// The keys are far2l's, and the same f4's Alt+F8/F11/F12 history
+		// dialogs use (f4 #1155): Shift+Del drops the entry under the cursor,
+		// Del clears the whole list once confirmed. This dropdown used to
+		// drop one entry on Del, Backspace and their Shift forms alike.
+		if (ev.VirtualKeyCode == vtinput.VK_DELETE || ev.VirtualKeyCode == vtinput.VK_BACK) && shift {
+			e.deleteHistoryMenuItem(menu)
+			return true
+		}
+		if ev.VirtualKeyCode == vtinput.VK_DELETE && !shift && !ctrl && !alt {
+			e.confirmClearHistoryMenu(menu)
 			return true
 		}
 
@@ -1114,6 +1105,57 @@ func (e *Edit) OpenHistory() {
 	}
 
 	FrameManager.Push(menu)
+}
+
+// deleteHistoryMenuItem removes the entry under the cursor of the history
+// dropdown from the list and from the history it came from.
+func (e *Edit) deleteHistoryMenuItem(menu *VMenu) {
+	idx := menu.SelectPos
+	if idx < 0 || idx >= len(menu.Items) || idx >= len(e.History) {
+		return
+	}
+	e.History = append(e.History[:idx], e.History[idx+1:]...)
+	if e.HistoryID != "" && GlobalHistoryProvider != nil {
+		GlobalHistoryProvider.SaveHistory(e.HistoryID, e.History)
+	}
+	menu.Items = append(menu.Items[:idx], menu.Items[idx+1:]...)
+	menu.ItemCount = len(menu.Items)
+
+	if menu.SelectPos >= menu.ItemCount && menu.ItemCount > 0 {
+		menu.SetSelectPos(menu.ItemCount - 1)
+	} else if menu.ItemCount > 0 {
+		menu.SetSelectPos(menu.SelectPos) // Refresh view
+	}
+
+	if menu.ItemCount == 0 {
+		menu.Close()
+	}
+	FrameManager.Redraw()
+}
+
+// confirmClearHistoryMenu asks before wiping the whole history behind the
+// dropdown, the way far2l does for Del in any history list. Nothing changes
+// unless the first button is chosen.
+func (e *Edit) confirmClearHistoryMenu(menu *VMenu) {
+	if len(menu.Items) == 0 {
+		return
+	}
+	buttons := []string{Msg("vtui.Ok"), Msg("vtui.Cancel")}
+	dlg := ShowMessageEx(Msg("vtui.History"), Msg("vtui.HistoryClearConfirm"), buttons, MessageInfo)
+	dlg.OnResult = func(code int) {
+		if code != 0 {
+			return
+		}
+		e.History = nil
+		if e.HistoryID != "" && GlobalHistoryProvider != nil {
+			GlobalHistoryProvider.SaveHistory(e.HistoryID, e.History)
+		}
+		e.HistoryPos = -1
+		menu.Items = nil
+		menu.ItemCount = 0
+		menu.Close()
+		FrameManager.Redraw()
+	}
 }
 
 // AddHistory adds a string to the beginning of the history, removing duplicates.

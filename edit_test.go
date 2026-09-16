@@ -255,6 +255,73 @@ func TestEdit_HistoryMenu_Interactions(t *testing.T) {
 	}
 }
 
+// f4 #1155: the dropdown takes the same delete keys as every other history
+// list, far2l's: Shift+Del drops the entry under the cursor, Del clears the
+// whole list after a confirmation, and Backspace alone deletes nothing.
+func TestEdit_HistoryMenu_DeleteKeys(t *testing.T) {
+	SetDefaultPalette()
+	fm := FrameManager
+	fm.Init(NewSilentScreenBuf())
+	mock := &mockHistoryProvider{storage: map[string][]string{
+		"dlg": {"one", "two", "three", "four"},
+	}}
+	GlobalHistoryProvider = mock
+	defer func() { GlobalHistoryProvider = nil }()
+
+	e := NewEdit(0, 0, 20, "")
+	e.HistoryID = "dlg"
+	e.OpenHistory()
+	menu, ok := fm.GetTopFrame().(*VMenu)
+	if !ok {
+		t.Fatal("OpenHistory did not push a VMenu")
+	}
+	press := func(ev vtinput.InputEvent) {
+		ev.Type = vtinput.KeyEventType
+		ev.KeyDown = true
+		menu.ProcessKey(&ev)
+	}
+
+	press(vtinput.InputEvent{VirtualKeyCode: vtinput.VK_BACK})
+	if len(e.History) != 4 || menu.ItemCount != 4 {
+		t.Fatalf("Backspace deleted an entry: history %v, %d menu items", e.History, menu.ItemCount)
+	}
+
+	press(vtinput.InputEvent{VirtualKeyCode: vtinput.VK_DELETE, ControlKeyState: vtinput.ShiftPressed})
+	if len(e.History) != 3 || e.History[0] != "two" || menu.ItemCount != 3 {
+		t.Fatalf("Shift+Del should drop the entry under the cursor: history %v, %d menu items", e.History, menu.ItemCount)
+	}
+	if saved := mock.storage["dlg"]; len(saved) != 3 || saved[0] != "two" {
+		t.Fatalf("Shift+Del did not save the shortened history: %v", saved)
+	}
+
+	press(vtinput.InputEvent{VirtualKeyCode: vtinput.VK_DELETE})
+	confirm := fm.GetTopFrame()
+	if confirm == Frame(menu) {
+		t.Fatal("Del should ask before clearing the history")
+	}
+	if len(e.History) != 3 {
+		t.Fatalf("Del cleared the history before it was confirmed: %v", e.History)
+	}
+	confirm.SetExitCode(1) // Cancel
+	if len(e.History) != 3 || len(mock.storage["dlg"]) != 3 || menu.IsDone() {
+		t.Fatalf("a cancelled clear changed something: history %v, saved %v, menu done %v",
+			e.History, mock.storage["dlg"], menu.IsDone())
+	}
+
+	press(vtinput.InputEvent{VirtualKeyCode: vtinput.VK_DELETE})
+	confirm = fm.GetTopFrame()
+	if confirm == Frame(menu) {
+		t.Fatal("Del should ask before clearing the history")
+	}
+	confirm.SetExitCode(0) // Ok
+	if len(e.History) != 0 || len(mock.storage["dlg"]) != 0 {
+		t.Fatalf("a confirmed clear left entries behind: history %v, saved %v", e.History, mock.storage["dlg"])
+	}
+	if !menu.IsDone() {
+		t.Error("the dropdown should close once its history is cleared")
+	}
+}
+
 func TestEdit_CombiningMarkCaret(t *testing.T) {
 	SetDefaultPalette()
 	e := NewEdit(0, 0, 10, "e\u0301")

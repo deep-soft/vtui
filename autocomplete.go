@@ -47,6 +47,11 @@ var PathHintProvider func(edit *Edit, word string, from, to int) []AutoCompleteI
 // each panel, then history) contributes up to this many rows.
 var autoCompleteMaxVisible = 5
 
+// autoCompleteFooter is the key hint drawn into the bottom border. The menu
+// is never narrower than it needs to show the hint whole (f4 #1155): a history
+// of short commands used to leave a 24-cell menu that cut it off mid-word.
+const autoCompleteFooter = "Up/Down Enter Esc Tab Shift+Del"
+
 // autoCompletePerCategory selects how the visible height is computed:
 // false = the whole list shares one window of autoCompleteMaxVisible rows,
 // true = each category shows up to autoCompleteMaxVisible rows of its own.
@@ -416,6 +421,11 @@ func (ac *AutoCompleteMenu) reposition() {
 	h := vis + 2
 
 	w := 24
+	// Painter.DrawTitle keeps a corner and a padding cell on each side of the
+	// title, so the hint needs four cells more than its own width.
+	if fw := StringWidth(autoCompleteFooter) + 4; fw > w {
+		w = fw
+	}
 	for i := range ac.items {
 		if iw := runewidth.StringWidth(ac.items[i].Text) + 2; iw > w {
 			w = iw
@@ -559,9 +569,8 @@ func (ac *AutoCompleteMenu) Show(scr *ScreenBuf) {
 		}
 	}
 
-	footer := " Up/Down Enter Esc Tab Shift+Del "
 	p := NewPainter(scr)
-	p.DrawTitle(ac.X1, ac.Y2, ac.X2, footer, Palette[ColDialogBoxTitle])
+	p.DrawTitle(ac.X1, ac.Y2, ac.X2, autoCompleteFooter, Palette[ColDialogBoxTitle])
 
 	if ac.Edit.curPos > len(ac.Edit.text) {
 		ac.Edit.curPos = len(ac.Edit.text)

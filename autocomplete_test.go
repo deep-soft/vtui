@@ -1,8 +1,10 @@
 package vtui
 
 import (
-	"github.com/unxed/vtinput"
+	"strings"
 	"testing"
+
+	"github.com/unxed/vtinput"
 )
 
 func TestAutoComplete_SelectPos(t *testing.T) {
@@ -511,6 +513,37 @@ func TestAutoComplete_NearCursorPosition(t *testing.T) {
 	_, ay21, _, _ := ac2.GetPosition()
 	if ay21 >= edit2.Y1 {
 		t.Errorf("Menu should flip above the edit near the bottom edge: y1=%d, edit y=%d", ay21, edit2.Y1)
+	}
+}
+
+// f4 #1155: a history of short commands left a 24-cell menu whose bottom
+// border cut the key hint off after "Up/Down Enter Esc T".
+func TestAutoComplete_FooterFitsShortHistory(t *testing.T) {
+	SetDefaultPalette()
+	scr := NewSilentScreenBuf()
+	scr.AllocBuf(100, 40)
+	FrameManager.Init(scr)
+
+	edit := NewEdit(10, 20, 60, "e")
+	edit.History = []string{"edit.exe"}
+	ac := NewAutoCompleteMenu(edit)
+	defer ac.Close()
+	if !ac.HasMatches() {
+		t.Fatal(`expected "edit.exe" to match "e"`)
+	}
+
+	x1, _, x2, y2 := ac.GetPosition()
+	if want := StringWidth(autoCompleteFooter) + 4; x2-x1+1 < want {
+		t.Errorf("menu width %d cannot hold the key hint, want at least %d", x2-x1+1, want)
+	}
+
+	ac.Show(scr)
+	var bottom strings.Builder
+	for x := x1; x <= x2; x++ {
+		bottom.WriteRune(rune(scr.GetCell(x, y2).Char))
+	}
+	if !strings.Contains(bottom.String(), autoCompleteFooter) {
+		t.Errorf("bottom border %q does not carry the whole key hint %q", bottom.String(), autoCompleteFooter)
 	}
 }
 
