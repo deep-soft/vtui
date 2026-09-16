@@ -398,3 +398,24 @@ func TestVMenu_HeldArrowStopsAtEdgeWithoutLoopScroll(t *testing.T) {
 	send(vtinput.VK_UP, true, false)
 	expect("hold Up on the first item loops", 2)
 }
+
+// A menu scrollbar sits on the menu frame, so it must follow the menu palette
+// rather than the shared list scrollbar color (f4 issue #261).
+func TestVMenu_ScrollBarUsesMenuScrollbarColor(t *testing.T) {
+	SetDefaultPalette()
+	Palette[ColScrollBar] = SetRGBBoth(0, 0xC0C0C0, 0x0000A0)
+	Palette[ColMenuScrollbar] = SetRGBBoth(0, 0x123456, 0xABCDEF)
+	t.Cleanup(SetDefaultPalette)
+
+	m := NewVMenu("Long")
+	for i := 0; i < 30; i++ {
+		m.AddItem(MenuItem{Text: "item"})
+	}
+	m.SetPosition(0, 0, 20, 10)
+
+	scr := NewSilentScreenBuf()
+	scr.AllocBuf(22, 12)
+	m.Show(scr)
+
+	checkCell(t, scr, 20, 1, ScrollUpArrow, Palette[ColMenuScrollbar])
+}

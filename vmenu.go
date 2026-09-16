@@ -107,6 +107,7 @@ func NewVMenu(title string) *VMenu {
 	m.MarginTop = 1
 	m.MarginBottom = 1
 	m.InitScrollBar(m)
+	m.ScrollBar.ColorIdx = ColMenuScrollbar
 	return m
 }
 
@@ -190,6 +191,9 @@ func (m *VMenu) OpenSubMenu(index int) bool {
 	sub.ColorSelectedHighlightIdx = m.ColorSelectedHighlightIdx
 	sub.ColorBoxIdx = m.ColorBoxIdx
 	sub.ColorTitleIdx = m.ColorTitleIdx
+	if sub.ScrollBar != nil && m.ScrollBar != nil {
+		sub.ScrollBar.ColorIdx = m.ScrollBar.ColorIdx
+	}
 	for _, nested := range item.SubItems {
 		if nested.Separator {
 			sub.AddSeparator()
