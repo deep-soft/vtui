@@ -727,6 +727,8 @@ func (m *VMenu) HandleSemanticAction(action map[string]any) bool {
 		case "menu_activate", "menu.activate":
 			idx := semanticInt(action["index"])
 			if idx >= 0 && idx < len(m.Items) && !m.Items[idx].Separator {
+				// The index names an entry of the full list.
+				m.ClearFilter()
 				m.SetSelectPos(idx)
 				return m.ProcessKey(&vtinput.InputEvent{Type: vtinput.KeyEventType, KeyDown: true, VirtualKeyCode: vtinput.VK_RETURN})
 			}

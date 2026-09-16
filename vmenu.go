@@ -61,6 +61,21 @@ type VMenu struct {
 	ColorSelectedHighlightIdx int
 	ColorBoxIdx               int
 	ColorTitleIdx             int
+
+	// DisableFilter turns the item filter (Ctrl+Alt+F, see vmenu_filter.go)
+	// off. A menu that filters its own items, or paints rows from TopPos
+	// and Items by itself, sets it: the filter hides rows the consumer
+	// would still paint.
+	DisableFilter bool
+	// FilterOnType starts the filter with the first printable key, without
+	// Ctrl+Alt+F. It suits a list whose letters do nothing else, such as the
+	// history of an input field.
+	FilterOnType bool
+
+	filterOn     bool
+	filterLocked bool
+	filterText   []rune
+	filterTop    int
 }
 
 // menuStopHeldArrowAtEdge holds the inverse of SetMenuLoopScroll, so that
@@ -108,6 +123,14 @@ func NewVMenu(title string) *VMenu {
 	m.MarginBottom = 1
 	m.InitScrollBar(m)
 	m.ScrollBar.ColorIdx = ColMenuScrollbar
+	// The bar counts shown rows while the filter hides items.
+	m.ScrollBar.OnScroll = func(v int) {
+		if m.filtering() {
+			m.scrollFilteredBy(m.visibleRows(), v-m.filterTop)
+			return
+		}
+		m.ScrollBy(v - m.TopPos)
+	}
 	return m
 }
 
@@ -226,7 +249,7 @@ func (m *VMenu) OpenSubMenu(index int) bool {
 	}
 
 	// The first nested row lines up with the row that opened it.
-	y1 := m.Y1 + m.MarginTop + (index - m.TopPos) - 1
+	y1 := m.Y1 + m.MarginTop + m.rowOffset(index) - 1
 	y2 := y1 + sub.GetItemCount() + 1
 	if y2 > screenH-1 {
 		y1 -= y2 - (screenH - 1)
@@ -284,6 +307,17 @@ func (m *VMenu) ProcessKey(e *vtinput.InputEvent) bool {
 		return false
 	}
 
+	if m.filtering() {
+		// A consumer may have changed Items since the last key.
+		m.steerSelection(m.visibleRows())
+	}
+	if m.processFilterKey(e) {
+		return true
+	}
+	if m.filterBlocksKey(e) {
+		return true
+	}
+
 	if m.OnKeyDown != nil && m.OnKeyDown(e) {
 		return true
 	}
@@ -320,17 +354,17 @@ func (m *VMenu) ProcessKey(e *vtinput.InputEvent) bool {
 			return true
 		}
 		// If last item in standalone menu, let focus cycle (unless wrapping is on)
-		if m.SelectPos == m.ItemCount-1 && !m.Wrap {
+		if m.atLastRow() && !m.Wrap {
 			return false
 		}
 		return m.HandleKey(e)
 	case vtinput.VK_UP:
-		if m.SelectPos == 0 && !isSubMenu && !m.Wrap {
+		if m.atFirstRow() && !isSubMenu && !m.Wrap {
 			return false
 		}
 		return m.handleArrowKey(e)
 	case vtinput.VK_DOWN:
-		if m.SelectPos == m.ItemCount-1 && !isSubMenu && !m.Wrap {
+		if m.atLastRow() && !isSubMenu && !m.Wrap {
 			return false
 		}
 		return m.handleArrowKey(e)
@@ -382,8 +416,17 @@ func (m *VMenu) ProcessKey(e *vtinput.InputEvent) bool {
 	if e.Char != 0 {
 		charLower := unicode.ToLower(e.Char)
 		xlatLower := unicode.ToLower(GlobalXlator.Translate(e.Char))
+		var shown []int
+		if m.filtering() {
+			shown = m.visibleRows()
+		}
 		for i, item := range m.Items {
 			if item.Separator {
+				continue
+			}
+			// A locked filter hands letters back to the hotkeys, but only
+			// for the items it shows.
+			if shown != nil && rowOfItem(shown, i) < 0 {
 				continue
 			}
 			hk := ExtractHotkey(item.Text)
@@ -413,6 +456,24 @@ func (m *VMenu) ProcessKey(e *vtinput.InputEvent) bool {
 	}
 
 	return m.HandleKey(e)
+}
+
+// atFirstRow and atLastRow report whether the selection is on the first or
+// the last row shown.
+func (m *VMenu) atFirstRow() bool {
+	if !m.filtering() {
+		return m.SelectPos == 0
+	}
+	rows := m.visibleRows()
+	return len(rows) == 0 || m.SelectPos == rows[0]
+}
+
+func (m *VMenu) atLastRow() bool {
+	if !m.filtering() {
+		return m.SelectPos == m.ItemCount-1
+	}
+	rows := m.visibleRows()
+	return len(rows) == 0 || m.SelectPos == rows[len(rows)-1]
 }
 
 // handleArrowKey moves the selection for Up and Down. far2l's VMenu passes
@@ -445,6 +506,9 @@ func (m *VMenu) GetType() FrameType {
 
 func (m *VMenu) SetExitCode(code int) {
 	m.mouseSelecting = false
+	// far2l drops the filter whenever the menu goes away; the item indices
+	// the menu hands back never depended on it.
+	m.setFilter(false)
 	m.CloseSubMenu()
 	m.closeAncestors()
 	m.done = true
@@ -470,6 +534,7 @@ func (m *VMenu) HasShadow() bool       { return !m.HideShadow }
 // ClearDone resets the menu state, allowing it to be shown again.
 func (m *VMenu) ClearDone() {
 	m.mouseSelecting = false
+	m.setFilter(false)
 	m.done = false
 	m.exitCode = -1
 	m.selectAtOpen = m.SelectPos
@@ -482,6 +547,9 @@ func (m *VMenu) BeginMouseSelection() { m.mouseSelecting = true }
 func (m *VMenu) ProcessMouse(e *vtinput.InputEvent) bool {
 	if m.IsDisabled() || e.Type != vtinput.MouseEventType {
 		return false
+	}
+	if m.filtering() {
+		m.steerSelection(m.visibleRows())
 	}
 	if m.mouseSelecting {
 		index := m.GetClickIndex(int(e.MouseY))
@@ -499,6 +567,14 @@ func (m *VMenu) ProcessMouse(e *vtinput.InputEvent) bool {
 				return m.ProcessMouse(&click)
 			}
 		}
+		return true
+	}
+	if m.filtering() && e.WheelDirection != 0 && (m.ScrollBar == nil || !m.ScrollBar.IsMouseCaptured()) {
+		lines := wheelLinesFor(m.WheelArea, e.WheelDirection)
+		if e.WheelDirection > 0 {
+			lines = -lines
+		}
+		m.scrollFilteredBy(m.visibleRows(), lines)
 		return true
 	}
 	if m.HandleMouseScroll(e) {
@@ -575,7 +651,7 @@ func (m *VMenu) DisplayObject(scr *ScreenBuf) {
 
 	// far2l paints a menu title with Menu.Title whether the menu holds focus
 	// or not, so there is no separate focused variant here.
-	p.DrawTitle(m.X1, m.Y1, m.X2, m.title, Palette[m.ColorTitleIdx])
+	p.DrawTitle(m.X1, m.Y1, m.X2, m.displayTitle(), Palette[m.ColorTitleIdx])
 
 	colText := Palette[m.ColorTextIdx]
 	colSel := Palette[m.ColorSelectedTextIdx]
@@ -588,12 +664,26 @@ func (m *VMenu) DisplayObject(scr *ScreenBuf) {
 	colHigh := Palette[m.ColorHighlightIdx]
 	colSelHigh := Palette[m.ColorSelectedHighlightIdx]
 
-	// 3. Rendering items
+	// 3. Rendering items. While the filter hides items, rows map to the
+	// items it shows.
+	top := m.TopPos
+	var shown []int
+	if m.filtering() {
+		shown = m.visibleRows()
+		m.steerSelection(shown)
+		top = m.filterTop
+	}
 	for i := 0; i < height; i++ {
-		itemIdx := i + m.TopPos
+		itemIdx := i + top
 		currY := m.Y1 + 1 + i
 		if currY >= m.Y2 {
 			break
+		}
+		if shown != nil {
+			if itemIdx >= len(shown) {
+				continue
+			}
+			itemIdx = shown[itemIdx]
 		}
 		if itemIdx >= len(m.Items) {
 			continue

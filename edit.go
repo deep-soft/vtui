@@ -1020,6 +1020,10 @@ func (e *Edit) OpenHistory() {
 	}
 	menu := NewVMenu(Msg("vtui.History"))
 	menu.BoxType = SingleBox
+	// Typing narrows the list at once, as it does in f4's Alt+F8, Alt+F11
+	// and Alt+F12 history dialogs (f4 #263): letters select nothing else
+	// here, since history entries carry no hotkeys.
+	menu.FilterOnType = true
 	for _, h := range e.History {
 		menu.AddItem(MenuItem{Text: h})
 	}
