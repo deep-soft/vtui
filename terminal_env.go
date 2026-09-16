@@ -7,12 +7,11 @@ import (
 )
 
 const (
-	seqAltScreenOn       = "\x1b[?1049h\x1b[2J\x1b[H"
-	seqAltScreenOff      = "\x1b[?1049l"
-	seqAutoWrapOff       = "\x1b[?7l"
-	seqAutoWrapOn        = "\x1b[?7h"
-	seqBlinkingUnderline = "\x1b[3 q"
-	seqDefaultCursor     = "\x1b[0 q"
+	seqAltScreenOn   = "\x1b[?1049h\x1b[2J\x1b[H"
+	seqAltScreenOff  = "\x1b[?1049l"
+	seqAutoWrapOff   = "\x1b[?7l"
+	seqAutoWrapOn    = "\x1b[?7h"
+	seqDefaultCursor = "\x1b[0 q"
 	// The cursor is the one glyph on screen the application does not paint
 	// itself, so its color comes from the terminal's own theme and can land
 	// anywhere -- including on top of the background the application chose.
@@ -344,7 +343,8 @@ func resumeLocked(withAltScreen bool) error {
 		consoleCursorTypeStale = true
 		cursorColorSent = -2
 		if modernVT && ManageCursorStyle && !cursorStyleViaConsoleAPI() {
-			out.WriteString(seqBlinkingUnderline)
+			// The insert-mode caret, until the first frame says otherwise.
+			out.WriteString(cursorStyleSeq(InsertCursorShape(), CursorBlinks()))
 		}
 		out.Sync()
 		isPrepared = true

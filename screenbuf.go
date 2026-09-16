@@ -791,6 +791,7 @@ type AnsiRenderer struct {
 	lastSentCursorX, lastSentCursorY int
 	lastSentCursorVis                bool
 	lastSentCursorShape              CursorShape
+	lastSentCursorBlink              bool
 	termCursorInvalid                bool
 	firstInit                        bool
 
@@ -1075,7 +1076,8 @@ func (r *AnsiRenderer) PrepareFlush() func() {
 	// consumed once actually written, so flipping ManageCursorStyle back on at
 	// runtime still delivers the color.
 	colorPending := ManageCursorStyle && !cursorStyleViaConsoleAPI() && CursorColor != cursorColorSent
-	if !r.firstInit || r.termCursorInvalid || r.cursorX != r.lastSentCursorX || r.cursorY != r.lastSentCursorY || r.cursorVis != r.lastSentCursorVis || r.cursorShape != r.lastSentCursorShape || colorPending {
+	blink := CursorBlinks()
+	if !r.firstInit || r.termCursorInvalid || r.cursorX != r.lastSentCursorX || r.cursorY != r.lastSentCursorY || r.cursorVis != r.lastSentCursorVis || r.cursorShape != r.lastSentCursorShape || blink != r.lastSentCursorBlink || colorPending {
 		if colorPending {
 			if CursorColor >= 0 {
 				_, _ = fmt.Fprintf(&r.frameOut, seqCursorColor, CursorColor&0xFFFFFF)
@@ -1100,17 +1102,17 @@ func (r *AnsiRenderer) PrepareFlush() func() {
 			// stream: see cursorStyleViaConsoleAPI.
 			if ManageCursorStyle && !cursorStyleViaConsoleAPI() {
 				if os.Getenv("TERM") == "linux" {
+					// The Linux console's cursor sizes (CSI ? Ps c) have
+					// no vertical bar and no blink control: a bar is drawn
+					// the way an underline is.
 					if r.cursorShape == CursorShapeBlock {
 						r.frameOut.WriteString("\x1b[?6c")
 					} else {
 						r.frameOut.WriteString("\x1b[?3c")
 					}
 				} else {
-					if r.cursorShape == CursorShapeBlock {
-						r.frameOut.WriteString("\x1b[1 q\x1b]1337;CursorShape=0\x07")
-					} else {
-						r.frameOut.WriteString("\x1b[3 q\x1b]1337;CursorShape=2\x07")
-					}
+					r.frameOut.WriteString(cursorStyleSeq(r.cursorShape, blink))
+					r.frameOut.WriteString(cursorShapeOSC1337(r.cursorShape))
 				}
 			}
 		} else {
@@ -1123,6 +1125,7 @@ func (r *AnsiRenderer) PrepareFlush() func() {
 		r.lastSentCursorY = r.cursorY
 		r.lastSentCursorVis = r.cursorVis
 		r.lastSentCursorShape = r.cursorShape
+		r.lastSentCursorBlink = blink
 		r.termCursorInvalid = false
 		r.firstInit = true
 	}

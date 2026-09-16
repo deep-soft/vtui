@@ -244,14 +244,7 @@ func (r *GogpuRenderer) Render(buf, shadow []CharInfo, w, h int, force bool) {
 		}
 	}
 
-	now := time.Now()
-	if now.Sub(r.lastBlinkTime) >= 500*time.Millisecond {
-		r.blinkState = !r.blinkState
-		r.lastBlinkTime = r.lastBlinkTime.Add(500 * time.Millisecond)
-		if now.Sub(r.lastBlinkTime) >= 500*time.Millisecond {
-			r.lastBlinkTime = now
-		}
-	}
+	stepSoftwareBlink(&r.blinkState, &r.lastBlinkTime, time.Now())
 
 	if !needsRedraw && r.cursorVis {
 		if r.blinkState != r.lastBlinkState {
@@ -828,13 +821,10 @@ func (r *GogpuRenderer) drawFrame(dc *gg.Context, w, h int) gogpuFrameStats {
 		curX, curSpan := CellSpanAt(r.renderBuf, drawCols, r.cursorX, r.cursorY)
 		cx := float64(curX * r.cellW)
 		cy := float64(r.cursorY * r.cellH)
-		curW := float64(curSpan * r.cellW)
-		if r.cursorShape == CursorShapeBlock {
-			dc.DrawRectangle(cx, cy, curW, float64(r.cellH))
-		} else {
-			cy += float64(r.cellH) - 2
-			dc.DrawRectangle(cx, cy, curW, 2)
-		}
+		// This renderer has always drawn two-pixel lines whatever the
+		// display scale; that is kept.
+		x0, y0, x1, y1 := cursorCellRect(r.cursorShape, curSpan*r.cellW, r.cellH, false)
+		dc.DrawRectangle(cx+float64(x0), cy+float64(y0), float64(x1-x0), float64(y1-y0))
 		dc.Fill()
 	}
 	return prof

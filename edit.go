@@ -217,9 +217,9 @@ func (e *Edit) Show(scr *ScreenBuf) {
 	if e.IsFocused() && !e.HideCursor {
 		scr.SetCursorVisible(true)
 		if e.overtype {
-			scr.SetCursorShape(CursorShapeBlock)
+			scr.SetCursorShape(OvertypeCursorShape())
 		} else {
-			scr.SetCursorShape(CursorShapeUnderline)
+			scr.SetCursorShape(InsertCursorShape())
 		}
 		vOffset := 0
 		if DefaultBidiMode == BidiFull {

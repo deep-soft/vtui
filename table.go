@@ -992,7 +992,7 @@ func (t *Table) drawSearchLine(scr *ScreenBuf) {
 
 	if t.IsFocused() {
 		scr.SetCursorVisible(true)
-		scr.SetCursorShape(CursorShapeUnderline)
+		scr.SetCursorShape(InsertCursorShape())
 		cursorX := t.X1 + 2 + StringWidth(string(t.searchRunes[t.searchLeft:t.searchCursor]))
 		if cursorX > t.X2 {
 			cursorX = t.X2

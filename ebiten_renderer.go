@@ -116,14 +116,7 @@ func (r *EbitenRenderer) Render(buf, shadow []CharInfo, w, h int, forceRedraw bo
 	// The blink phase advances on wall clock, not on frame count, so that a
 	// backend running at 60fps and one running at 15fps blink alike. Only a
 	// visible caret makes the phase change worth a repaint.
-	now := time.Now()
-	if now.Sub(r.lastBlinkTime) >= 500*time.Millisecond {
-		r.blinkState = !r.blinkState
-		r.lastBlinkTime = r.lastBlinkTime.Add(500 * time.Millisecond)
-		if now.Sub(r.lastBlinkTime) >= 500*time.Millisecond {
-			r.lastBlinkTime = now
-		}
-	}
+	stepSoftwareBlink(&r.blinkState, &r.lastBlinkTime, time.Now())
 	cursorVisible := r.cursorVis && r.blinkState
 
 	pixW, pixH := w*r.cellW, h*r.cellH
@@ -301,40 +294,11 @@ func (r *EbitenRenderer) drawCachedGlyph(img *image.RGBA, cellVal uint64, px, py
 	}
 }
 
-// invertCursor inverts the cell under the caret, matching the X11 backend so
-// the caret stays visible whatever colours the cell happens to carry.
+// invertCursor inverts the caret's part of the cell under it, with the
+// geometry every pixel renderer shares (see cursorCellRect), so the caret
+// stays visible whatever colours the cell happens to carry.
 func (r *EbitenRenderer) invertCursor(img *image.RGBA, px, py, rw int) {
-	// Same geometry as the X11 backend: a block fills the cell, anything else
-	// is an underline two pixels tall, four when the display is scaled, so it
-	// stays visible on a HiDPI screen instead of thinning to a hair.
-	startY := 0
-	if r.cursorShape != CursorShapeBlock {
-		thickness := 2
-		if r.scale > 1 {
-			thickness = 4
-		}
-		startY = r.cellH - thickness
-		if startY < 0 {
-			startY = 0
-		}
-	}
-	for iy := startY; iy < r.cellH; iy++ {
-		if py+iy >= img.Rect.Dy() {
-			break
-		}
-		row := (py + iy) * img.Stride
-		for ix := 0; ix < r.cellW*rw; ix++ {
-			if px+ix >= img.Rect.Dx() {
-				break
-			}
-			off := row + (px+ix)*4
-			if off+2 < len(img.Pix) {
-				img.Pix[off] = 255 - img.Pix[off]
-				img.Pix[off+1] = 255 - img.Pix[off+1]
-				img.Pix[off+2] = 255 - img.Pix[off+2]
-			}
-		}
-	}
+	invertCursorRect(img.Pix, img.Stride, img.Rect.Dx(), img.Rect.Dy(), px, py, r.cursorShape, r.cellW*rw, r.cellH, r.scale > 1)
 }
 
 // RenderGraphics implements GraphicsRenderer, drawing the image layer over

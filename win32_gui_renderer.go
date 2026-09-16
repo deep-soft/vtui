@@ -116,14 +116,7 @@ func (r *Win32GuiRenderer) Render(buf, shadow []CharInfo, w, h int, forceRedraw 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	now := time.Now()
-	if now.Sub(r.lastBlinkTime) >= 500*time.Millisecond {
-		r.blinkState = !r.blinkState
-		r.lastBlinkTime = r.lastBlinkTime.Add(500 * time.Millisecond)
-		if now.Sub(r.lastBlinkTime) >= 500*time.Millisecond {
-			r.lastBlinkTime = now
-		}
-	}
+	stepSoftwareBlink(&r.blinkState, &r.lastBlinkTime, time.Now())
 	cursorVisible := r.cursorVis && r.blinkState
 
 	pixW, pixH := w*r.cellW, h*r.cellH
@@ -288,35 +281,11 @@ func (r *Win32GuiRenderer) drawCachedGlyph(img *image.RGBA, cellVal uint64, px, 
 	}
 }
 
+// invertCursor inverts the caret's part of the cell under it, with the
+// geometry every pixel renderer shares (see cursorCellRect), so the caret
+// stays visible whatever colours the cell happens to carry.
 func (r *Win32GuiRenderer) invertCursor(img *image.RGBA, px, py, rw int) {
-	startY := 0
-	if r.cursorShape != CursorShapeBlock {
-		thickness := 2
-		if r.scale > 1 {
-			thickness = 4
-		}
-		startY = r.cellH - thickness
-		if startY < 0 {
-			startY = 0
-		}
-	}
-	for iy := startY; iy < r.cellH; iy++ {
-		if py+iy >= img.Rect.Dy() {
-			break
-		}
-		row := (py + iy) * img.Stride
-		for ix := 0; ix < r.cellW*rw; ix++ {
-			if px+ix >= img.Rect.Dx() {
-				break
-			}
-			off := row + (px+ix)*4
-			if off+2 < len(img.Pix) {
-				img.Pix[off] = 255 - img.Pix[off]
-				img.Pix[off+1] = 255 - img.Pix[off+1]
-				img.Pix[off+2] = 255 - img.Pix[off+2]
-			}
-		}
-	}
+	invertCursorRect(img.Pix, img.Stride, img.Rect.Dx(), img.Rect.Dy(), px, py, r.cursorShape, r.cellW*rw, r.cellH, r.scale > 1)
 }
 
 func (r *Win32GuiRenderer) RenderGraphics(layer *GraphicsLayer, buf, shadow []CharInfo, w, h int, force bool) {

@@ -178,14 +178,7 @@ func (r *X11Renderer) Render(buf, shadow []CharInfo, w, h int, forceRedraw bool)
 	r.host.mu.Lock()
 	defer r.host.mu.Unlock()
 
-	now := time.Now()
-	if now.Sub(r.lastBlinkTime) >= 500*time.Millisecond {
-		r.blinkState = !r.blinkState
-		r.lastBlinkTime = r.lastBlinkTime.Add(500 * time.Millisecond)
-		if now.Sub(r.lastBlinkTime) >= 500*time.Millisecond {
-			r.lastBlinkTime = now
-		}
-	}
+	stepSoftwareBlink(&r.blinkState, &r.lastBlinkTime, time.Now())
 
 	cursorVisible := r.cursorVis && r.blinkState
 
@@ -317,35 +310,7 @@ func (r *X11Renderer) Render(buf, shadow []CharInfo, w, h int, forceRedraw bool)
 				}
 
 				if cursorVisible && y == r.cursorY && r.cursorX >= currX && r.cursorX < currX+rw {
-					var startY int
-					if r.cursorShape == CursorShapeBlock {
-						startY = 0
-					} else {
-						thickness := 2
-						if r.host.scale > 1 {
-							thickness = 4
-						}
-						startY = ch - thickness
-					}
-					for iy := startY; iy < ch; iy++ {
-						pixelY := py + iy
-						if pixelY < 0 || pixelY >= img.Rect.Max.Y {
-							continue
-						}
-						rowStart := pixelY * img.Stride
-						for ix := 0; ix < cw*rw; ix++ {
-							pixelX := cpx + ix
-							if pixelX < 0 || pixelX >= img.Rect.Max.X {
-								continue
-							}
-							off := rowStart + pixelX*4
-							if off+2 < len(img.Pix) {
-								img.Pix[off] = 255 - img.Pix[off]
-								img.Pix[off+1] = 255 - img.Pix[off+1]
-								img.Pix[off+2] = 255 - img.Pix[off+2]
-							}
-						}
-					}
+					invertCursorRect(img.Pix, img.Stride, img.Rect.Max.X, img.Rect.Max.Y, cpx, py, r.cursorShape, cw*rw, ch, r.host.scale > 1)
 				}
 				sx += rw
 			}
