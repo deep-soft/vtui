@@ -43,6 +43,15 @@ func ActiveBackend() string {
 	return activeBackend
 }
 
+// BackendDetails returns the extra facts the active backend reported through
+// SetActiveBackend, for an about box that lays them out itself rather than
+// taking BackendAbout's text. It is empty when the backend reported none.
+func BackendDetails() []string {
+	backendMu.RLock()
+	defer backendMu.RUnlock()
+	return append([]string(nil), backendDetails...)
+}
+
 // WindowTitleWithBackend appends the backend name to a window title.
 //
 // This is the far2l habit: the title says what is drawing it, so a screenshot

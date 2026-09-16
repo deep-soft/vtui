@@ -29,10 +29,13 @@ type MenuItem struct {
 // VMenu implements a vertical menu with navigation support.
 type VMenu struct {
 	ScrollView
-	title    string
-	Items    []MenuItem
-	done     bool
-	exitCode int
+	title string
+	// bottomTitle is drawn centred on the lower border, where far2l's
+	// VMenu::SetBottomTitle puts a menu's key hints.
+	bottomTitle string
+	Items       []MenuItem
+	done        bool
+	exitCode    int
 	// selectAtOpen is SelectPos as of the last ClearDone. Browsing moves
 	// SelectPos live (arrows, mouse hover), so cancelling has to put it
 	// back: dialogs read SelectPos as the confirmed choice, and without the
@@ -71,6 +74,11 @@ type VMenu struct {
 	// Ctrl+Alt+F. It suits a list whose letters do nothing else, such as the
 	// history of an input field.
 	FilterOnType bool
+	// IgnoreSingleClick is far2l's VMENU_IGNORE_SINGLECLICK: a single left
+	// click only selects the row it lands on, and a double click confirms
+	// it. It suits a list read rather than chosen from, such as an about
+	// box, where a stray click must not close it.
+	IgnoreSingleClick bool
 
 	filterOn     bool
 	filterLocked bool
@@ -496,6 +504,25 @@ func (m *VMenu) ResizeConsole(w, h int) {
 func (m *VMenu) GetTitle() string {
 	return m.title
 }
+
+// SetTitle replaces the title, dropping ampersands the way NewVMenu does.
+// far2l retitles a menu in place to show a mode, such as far:about's
+// hidden-rows marker.
+func (m *VMenu) SetTitle(title string) {
+	m.title, _, _ = ParseAmpersandString(title)
+}
+
+// GetBottomTitle returns the text drawn on the lower border.
+func (m *VMenu) GetBottomTitle() string {
+	return m.bottomTitle
+}
+
+// SetBottomTitle sets the text drawn centred on the lower border, typically
+// the keys a menu understands beyond the usual ones. An empty string removes
+// it.
+func (m *VMenu) SetBottomTitle(title string) {
+	m.bottomTitle = title
+}
 func (m *VMenu) GetProgress() int {
 	return -1
 }
@@ -607,6 +634,9 @@ func (m *VMenu) ProcessMouse(e *vtinput.InputEvent) bool {
 				m.OpenSubMenu(clickIdx)
 				return true
 			}
+			if m.IgnoreSingleClick && e.MouseEventFlags&vtinput.DoubleClick == 0 {
+				return true
+			}
 			// Virtual rows (ItemCount beyond len(Items)) have no command to
 			// fire; the click still selects and confirms them.
 			if clickIdx < len(m.Items) {
@@ -652,6 +682,7 @@ func (m *VMenu) DisplayObject(scr *ScreenBuf) {
 	// far2l paints a menu title with Menu.Title whether the menu holds focus
 	// or not, so there is no separate focused variant here.
 	p.DrawTitle(m.X1, m.Y1, m.X2, m.displayTitle(), Palette[m.ColorTitleIdx])
+	p.DrawTitle(m.X1, m.Y2, m.X2, m.bottomTitle, Palette[m.ColorTitleIdx])
 
 	colText := Palette[m.ColorTextIdx]
 	colSel := Palette[m.ColorSelectedTextIdx]
