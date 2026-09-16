@@ -311,6 +311,22 @@ func (r *GogpuRenderer) ResizeWindow(cols, rows int) {
 	}
 }
 
+// ToggleMaximized maximizes the window or restores it, through gogpu's
+// App.Maximize, which toggles between the two. The state logged beforehand
+// is gogpu's own answer, so a log shows what gogpu believed.
+func (r *GogpuRenderer) ToggleMaximized() bool {
+	r.host.mu.Lock()
+	app := r.host.app
+	r.host.mu.Unlock()
+
+	if app == nil {
+		return false
+	}
+	DebugLog("GOGPU: toggle maximized: gogpu reports maximized=%v", app.IsMaximized())
+	app.Maximize()
+	return true
+}
+
 // glyphMemoEntry caches a rune's mask-space rects and bbox offset from the
 // cell origin (bx) and baseline (by). The baseline itself is not stored: it
 // always comes from the primary font, like DrawString does for fallback text.

@@ -93,6 +93,28 @@ func (r *WaylandRenderer) ResizeWindow(cols, rows int) {
 	}
 }
 
+// ToggleMaximized asks the compositor to maximize the window, or to restore
+// it when it is maximized (xdg_toplevel set_maximized / unset_maximized).
+// The toolkit tracks the state from the compositor's configure events on the
+// DisplayRun goroutine, so the toggle runs there.
+func (r *WaylandRenderer) ToggleMaximized() bool {
+	r.host.mu.Lock()
+	win := r.host.win
+	r.host.mu.Unlock()
+
+	if win == nil {
+		return false
+	}
+	r.host.runOnDisplay(func() {
+		if err := win.ToggleMaximized(); err != nil {
+			DebugLog("WAYLAND: toggle maximized failed: %v", err)
+			return
+		}
+		DebugLog("WAYLAND: toggle maximized requested")
+	})
+	return true
+}
+
 // RenderGraphics implements GraphicsRenderer. The Wayland host pushes the
 // whole buffer to the compositor on every flush, so unlike X11 there are no
 // dirty lines to mark.

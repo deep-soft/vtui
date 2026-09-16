@@ -73,6 +73,13 @@ const (
 	wmMouseWheel      = 0x020A
 	wmPerformDragDrop = 0x0400 + 101
 	wmPerformResize   = wmPerformDragDrop + 1
+	wmSysCommand      = 0x0112
+)
+
+// WM_SYSCOMMAND commands.
+const (
+	scMaximize = 0xF030
+	scRestore  = 0xF120
 )
 
 const (

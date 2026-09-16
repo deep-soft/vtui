@@ -376,6 +376,20 @@ func (r *EbitenRenderer) ResizeWindow(cols, rows int) {
 	}
 }
 
+// ToggleMaximized maximizes the window or restores it. Ebitengine's window
+// functions are concurrent-safe, and the host makes the window resizable,
+// which MaximizeWindow requires.
+func (r *EbitenRenderer) ToggleMaximized() bool {
+	maximized := ebiten.IsWindowMaximized()
+	DebugLog("EBITEN: toggle maximized: ebiten reports maximized=%v", maximized)
+	if maximized {
+		ebiten.RestoreWindow()
+	} else {
+		ebiten.MaximizeWindow()
+	}
+	return true
+}
+
 // WindowPosition returns the current desktop position of the Ebitengine
 // window. Ebitengine owns the native window, so the query is delegated to
 // its platform-aware API.

@@ -96,6 +96,14 @@ func (r *Win32GuiRenderer) ResizeWindow(cols, rows int) {
 	}
 }
 
+// ToggleMaximized maximizes the window or restores it.
+func (r *Win32GuiRenderer) ToggleMaximized() bool {
+	if r.host == nil {
+		return false
+	}
+	return r.host.ToggleMaximized()
+}
+
 func (r *Win32GuiRenderer) getCellColors(cell CharInfo) (uint32, uint32) {
 	bg := GetRGBBack(cell.Attributes)
 	if cell.Attributes&IsBgRGB == 0 {

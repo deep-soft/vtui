@@ -24,6 +24,7 @@ var (
 	procDefWindowProcW     = user32.NewProc("DefWindowProcW")
 	procDestroyWindow      = user32.NewProc("DestroyWindow")
 	procShowWindow         = user32.NewProc("ShowWindow")
+	procIsZoomed           = user32.NewProc("IsZoomed")
 	procUpdateWindow       = user32.NewProc("UpdateWindow")
 	procGetMessageW        = user32.NewProc("GetMessageW")
 	procTranslateMessage   = user32.NewProc("TranslateMessage")
@@ -251,6 +252,33 @@ func (h *Win32GuiHost) ResizeGrid(cols, rows int) {
 	// resize just like DoDragDrop is posted, so SetWindowPos and the resulting
 	// WM_SIZE are handled by the window's owning thread.
 	procPostMessageW.Call(uintptr(hwnd), wmPerformResize, 0, 0)
+}
+
+// ToggleMaximized maximizes the window, or restores it when it is maximized,
+// with the WM_SYSCOMMAND the title bar buttons send. The command is posted,
+// like ResizeGrid's, so the window's own thread carries it out.
+func (h *Win32GuiHost) ToggleMaximized() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	hwnd := h.hwnd
+	h.mu.Unlock()
+	if hwnd == 0 {
+		return false
+	}
+	zoomed, _, _ := procIsZoomed.Call(uintptr(hwnd))
+	cmd := uintptr(scMaximize)
+	if zoomed != 0 {
+		cmd = scRestore
+	}
+	DebugLog("WIN32GUI: toggle maximized: IsZoomed=%v", zoomed != 0)
+	ok, _, err := procPostMessageW.Call(uintptr(hwnd), wmSysCommand, cmd, 0)
+	if ok == 0 {
+		DebugLog("WIN32GUI: toggle maximized: PostMessage failed: %v", err)
+		return false
+	}
+	return true
 }
 
 // WindowPosition returns the top-left screen position of the native window.

@@ -14,6 +14,7 @@ type Win32GuiHost struct {
 
 func (h *Win32GuiHost) SetTitle(title string)     {}
 func (h *Win32GuiHost) ResizeGrid(cols, rows int) {}
+func (h *Win32GuiHost) ToggleMaximized() bool     { return false }
 func (h *Win32GuiHost) Invalidate()               {}
 func (h *Win32GuiHost) paintOutstanding() bool    { return false }
 func (h *Win32GuiHost) PostQuit() {

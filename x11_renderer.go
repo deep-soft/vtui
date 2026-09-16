@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"time"
 
+	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/xproto"
 	"golang.org/x/image/font"
 	"golang.org/x/image/math/fixed"
@@ -62,41 +63,105 @@ func (r *X11Renderer) ResizeWindow(cols, rows int) {
 	if conn == nil || screen == nil {
 		return
 	}
-
+	atoms, ok := x11MaximizeAtoms(conn)
+	if !ok {
+		return
+	}
 	// Посылаем ClientMessage родителю (Window Manager) для нативного разворачивания/восстановления
+	x11SendMaximized(conn, wid, screen.Root, atoms, cols > initialCols)
+}
+
+// ToggleMaximized is far2l's Alt+F9 on X11: maximize the window, or restore
+// it when it is maximized already. Whether it is comes from the window
+// manager's own _NET_WM_STATE, so a window maximized with the title bar
+// button is restored, not maximized again.
+func (r *X11Renderer) ToggleMaximized() bool {
+	r.host.mu.Lock()
+	conn := r.host.conn
+	wid := r.host.wid
+	screen := r.host.screen
+	r.host.mu.Unlock()
+
+	if conn == nil || screen == nil {
+		return false
+	}
+	atoms, ok := x11MaximizeAtoms(conn)
+	if !ok {
+		DebugLog("X11: toggle maximized: cannot intern the _NET_WM_STATE atoms")
+		return false
+	}
+	maximized := false
+	reply, err := xproto.GetProperty(conn, false, wid, atoms.state, xproto.AtomAtom, 0, 64).Reply()
+	if err != nil {
+		DebugLog("X11: toggle maximized: reading _NET_WM_STATE failed: %v", err)
+	} else if reply.Format == 32 {
+		maximized = netWMStateMaximized(reply.Value, atoms.maxVert, atoms.maxHorz)
+	}
+	DebugLog("X11: toggle maximized: window manager reports maximized=%v", maximized)
+	x11SendMaximized(conn, wid, screen.Root, atoms, !maximized)
+	return true
+}
+
+type x11MaxAtoms struct {
+	state, maxVert, maxHorz xproto.Atom
+}
+
+func x11MaximizeAtoms(conn *xgb.Conn) (x11MaxAtoms, bool) {
 	stateAtom, _ := xproto.InternAtom(conn, false, 13, "_NET_WM_STATE").Reply()
 	maxVertAtom, _ := xproto.InternAtom(conn, false, 28, "_NET_WM_STATE_MAXIMIZED_VERT").Reply()
 	maxHorzAtom, _ := xproto.InternAtom(conn, false, 28, "_NET_WM_STATE_MAXIMIZED_HORZ").Reply()
-
-	if stateAtom != nil && maxVertAtom != nil && maxHorzAtom != nil {
-		action := 0 // _NET_WM_STATE_REMOVE (восстановить)
-		if cols > initialCols {
-			action = 1 // _NET_WM_STATE_ADD (развернуть)
-		}
-
-		var data8 [20]byte
-		put32 := func(b []byte, v uint32) {
-			b[0] = byte(v)
-			b[1] = byte(v >> 8)
-			b[2] = byte(v >> 16)
-			b[3] = byte(v >> 24)
-		}
-		put32(data8[0:], uint32(action))
-		put32(data8[4:], uint32(maxVertAtom.Atom))
-		put32(data8[8:], uint32(maxHorzAtom.Atom))
-		put32(data8[12:], 1)
-
-		ev := xproto.ClientMessageEvent{
-			Format: 32,
-			Window: wid,
-			Type:   stateAtom.Atom,
-			Data:   xproto.ClientMessageDataUnion{Data8: data8[:]},
-		}
-
-		xproto.SendEvent(conn, false, screen.Root,
-			xproto.EventMaskSubstructureRedirect|xproto.EventMaskSubstructureNotify,
-			string(ev.Bytes()))
+	if stateAtom == nil || maxVertAtom == nil || maxHorzAtom == nil {
+		return x11MaxAtoms{}, false
 	}
+	return x11MaxAtoms{state: stateAtom.Atom, maxVert: maxVertAtom.Atom, maxHorz: maxHorzAtom.Atom}, true
+}
+
+// x11SendMaximized asks the window manager (EWMH _NET_WM_STATE client
+// message) to add or remove both maximized states in one request.
+func x11SendMaximized(conn *xgb.Conn, wid, root xproto.Window, atoms x11MaxAtoms, maximize bool) {
+	var action uint32 // _NET_WM_STATE_REMOVE (восстановить)
+	if maximize {
+		action = 1 // _NET_WM_STATE_ADD (развернуть)
+	}
+
+	var data8 [20]byte
+	put32 := func(b []byte, v uint32) {
+		b[0] = byte(v)
+		b[1] = byte(v >> 8)
+		b[2] = byte(v >> 16)
+		b[3] = byte(v >> 24)
+	}
+	put32(data8[0:], action)
+	put32(data8[4:], uint32(atoms.maxVert))
+	put32(data8[8:], uint32(atoms.maxHorz))
+	put32(data8[12:], 1)
+
+	ev := xproto.ClientMessageEvent{
+		Format: 32,
+		Window: wid,
+		Type:   atoms.state,
+		Data:   xproto.ClientMessageDataUnion{Data8: data8[:]},
+	}
+
+	xproto.SendEvent(conn, false, root,
+		xproto.EventMaskSubstructureRedirect|xproto.EventMaskSubstructureNotify,
+		string(ev.Bytes()))
+}
+
+// netWMStateMaximized reports whether a _NET_WM_STATE value (ATOM[], format
+// 32, in xgb's byte order) lists both maximized states. A window maximized
+// in one direction only is not maximized.
+func netWMStateMaximized(value []byte, vert, horz xproto.Atom) bool {
+	var hasVert, hasHorz bool
+	for i := 0; i+4 <= len(value); i += 4 {
+		switch xproto.Atom(xgb.Get32(value[i:])) {
+		case vert:
+			hasVert = true
+		case horz:
+			hasHorz = true
+		}
+	}
+	return hasVert && hasHorz
 }
 
 func (r *X11Renderer) SetCursor(x, y int, visible bool, shape CursorShape) {

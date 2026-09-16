@@ -187,23 +187,29 @@ func viewportSize(info consoleScreenBufferInfo) (int, int) {
 // inside the target first, every time, and points at #2366 in its source for
 // why. So does this now.
 func (c *conhostAltScreen) fit(w, h int) {
+	fitConsoleBuffer(c.own, w, h)
+}
+
+// fitConsoleBuffer makes the screen buffer behind handle exactly w by h cells
+// with the viewport at the origin, in the order planFit gives (see fit).
+func fitConsoleBuffer(handle syscall.Handle, w, h int) {
 	if w <= 0 || h <= 0 || w > 0x7fff || h > 0x7fff {
 		return
 	}
 	var info consoleScreenBufferInfo
-	if ok, _, _ := procGetConsoleScreenBufferInfo.Call(uintptr(c.own), uintptr(unsafe.Pointer(&info))); ok == 0 {
+	if ok, _, _ := procGetConsoleScreenBufferInfo.Call(uintptr(handle), uintptr(unsafe.Pointer(&info))); ok == 0 {
 		return
 	}
 	plan := planFit(info, w, h)
 	for _, step := range plan {
 		switch step.op {
 		case fitGrowBuffer, fitSizeBuffer:
-			procSetConsoleScreenBufferSize.Call(uintptr(c.own), coordArg(step.coord))
+			procSetConsoleScreenBufferSize.Call(uintptr(handle), coordArg(step.coord))
 		case fitMoveCursor:
-			procSetConsoleCursorPosition.Call(uintptr(c.own), coordArg(step.coord))
+			procSetConsoleCursorPosition.Call(uintptr(handle), coordArg(step.coord))
 		case fitWindow:
 			rect := SmallRect{Right: step.coord.X, Bottom: step.coord.Y}
-			procSetConsoleWindowInfo.Call(uintptr(c.own), uintptr(1), uintptr(unsafe.Pointer(&rect)))
+			procSetConsoleWindowInfo.Call(uintptr(handle), uintptr(1), uintptr(unsafe.Pointer(&rect)))
 		}
 	}
 }

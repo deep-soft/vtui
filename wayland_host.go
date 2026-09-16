@@ -82,6 +82,11 @@ type WaylandHost struct {
 	reader  *vtinput.Reader
 	present waylandPresentWake
 
+	// displayTasks are toolkit calls FrameManager's goroutine needs made on
+	// the DisplayRun goroutine. runOnDisplay queues them; the next present
+	// callback runs them, before its redraw.
+	displayTasks []func()
+
 	imgBuf     *image.RGBA
 	cols, rows int
 	cellW      int
@@ -373,6 +378,16 @@ func (h *WaylandHost) Close() {
 	h.present.close()
 }
 
+// runOnDisplay runs fn on the DisplayRun goroutine, where the window toolkit
+// expects to be called, by queueing it for the present callback and asking
+// for one. A task queued after the host has closed is dropped.
+func (h *WaylandHost) runOnDisplay(fn func()) {
+	h.mu.Lock()
+	h.displayTasks = append(h.displayTasks, fn)
+	h.mu.Unlock()
+	h.requestPresent()
+}
+
 // requestPresent asks the compositor to send a callback. The callback wakes
 // DisplayRun from its blocking socket read and schedules the deferred redraw
 // on the display goroutine, avoiding a cross-goroutine toolkit call.
@@ -416,7 +431,12 @@ func (h *WaylandHost) HandleCallbackDone(event wl.CallbackDoneEvent) {
 
 	h.mu.Lock()
 	widget := h.widget
+	tasks := h.displayTasks
+	h.displayTasks = nil
 	h.mu.Unlock()
+	for _, task := range tasks {
+		task()
+	}
 	if widget != nil {
 		widget.ScheduleRedraw()
 	}
