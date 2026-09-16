@@ -624,9 +624,11 @@ func loadBestFont(fontName string, size float64, dpi float64) (font.Face, int, i
 		advance, _ := face.GlyphAdvance('A')
 		cellW = advance.Ceil()
 
-		msg := fmt.Sprintf("GUI_FONT: Successfully loaded %s (%dx%d)", path, cellW, cellH)
-		fmt.Fprintln(os.Stderr, msg)
-		DebugLog("%s", msg)
+		// The debug log only. An application's stderr is usually its crash
+		// log (SetupStderrLog), and a crash log with anything in it is kept
+		// on exit: this line alone left a "crash" behind after every clean
+		// GUI session (f4 #474).
+		DebugLog("GUI_FONT: Successfully loaded %s (%dx%d)", path, cellW, cellH)
 		primaryFace = face
 		break
 	}
