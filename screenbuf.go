@@ -801,6 +801,32 @@ type AnsiRenderer struct {
 	gfxSixel *sixelEncoder
 	gfxFar2l *far2lEncoder
 	gfxList  []ImagePlacement
+
+	// The application palette the previous frame was written with. Outside
+	// the 16-colour profile palette-indexed cells reach the terminal as the
+	// colours they resolve to (see writeColorANSI), so the terminal no longer
+	// repaints them when the palette changes: the renderer has to.
+	palSeen bool
+	palNil  bool
+	palLast [256]uint32
+}
+
+// paletteChanged records the application palette of the frame being rendered
+// and reports whether it differs from the one the previous frame was written
+// with, in which case cells whose colours come from it are stale on screen.
+// In the 16-colour profile the cells carry bare indices and OSC 4 recolours
+// them, as before, so it never reports a change there.
+func (r *AnsiRenderer) paletteChanged(pal *[256]uint32) bool {
+	if r.parent.ColorProfile == ColorProfile16 {
+		return false
+	}
+	changed := r.palSeen && ((pal == nil) != r.palNil || (pal != nil && *pal != r.palLast))
+	r.palSeen = true
+	r.palNil = pal == nil
+	if pal != nil {
+		r.palLast = *pal
+	}
+	return changed
 }
 
 func (r *AnsiRenderer) SetPalette(pal *[256]uint32) {
@@ -883,6 +909,16 @@ func cellAdvanceTrusted(ch uint64, wide bool) bool {
 }
 
 func (r *AnsiRenderer) Render(buf, shadow []CharInfo, w, h int, force bool) {
+	var activePal *[256]uint32
+	if r.parent.ActivePalette != nil {
+		activePal = r.parent.ActivePalette
+	} else {
+		activePal = r.parent.ThemePalette
+	}
+	if r.paletteChanged(activePal) {
+		force = true
+	}
+
 	needsDraw := force
 	if !needsDraw {
 		for i := 0; i < w*h; i++ {
@@ -905,13 +941,6 @@ func (r *AnsiRenderer) Render(buf, shadow []CharInfo, w, h int, force bool) {
 	lastX, lastY := -1, -1
 	resync := false
 	r.lastAttr = ^uint64(0)
-
-	var activePal *[256]uint32
-	if r.parent.ActivePalette != nil {
-		activePal = r.parent.ActivePalette
-	} else {
-		activePal = r.parent.ThemePalette
-	}
 
 	for y := 0; y < h; y++ {
 		rowOff := y * w
