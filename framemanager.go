@@ -234,6 +234,14 @@ type frameManager struct {
 	injectedEvents []*vtinput.InputEvent
 	injectedMu     sync.Mutex
 	OnRender       func(scr *ScreenBuf)
+	// AfterFrameShow runs right after each frame's Show in a render pass,
+	// before the next frame up the stack is painted. A host decoration that
+	// belongs to one frame (a hint on its border, highlights over its text)
+	// drawn here keeps that frame's place in the stack: frames above cover
+	// it, and a frame that snapshots the screen in its own Show, like f4's
+	// screen grabber, still sees it. OnRender runs after every frame and the
+	// global bars, so whatever it draws lands on top of all of them.
+	AfterFrameShow func(scr *ScreenBuf, frame Frame)
 
 	pendingFar2l map[uint8]chan *vtinput.Far2lStack
 	far2lMu      sync.Mutex
@@ -2683,6 +2691,9 @@ func (fm *frameManager) renderPhase() {
 					}
 				}
 				frame.Show(fm.scr)
+				if fm.AfterFrameShow != nil {
+					fm.AfterFrameShow(fm.scr, frame)
+				}
 
 				// Only the topmost frame owns the caret. Frames are
 				// painted bottom-up, and a frame under the top one has no

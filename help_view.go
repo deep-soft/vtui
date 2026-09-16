@@ -117,6 +117,10 @@ func (hv *HelpView) PopTopic() {
 	}
 	hv.scrollTop = entry.scrollTop
 	hv.selectedIdx = entry.selectedIdx
+	// The title names the topic on screen, and hosts resolve the current
+	// topic from it (f4's help search does). Leaving the nested topic's name
+	// there after going back made both wrong.
+	hv.frame.SetTitle(" Help: " + entry.topic + " ")
 }
 
 func (hv *HelpView) Show(scr *ScreenBuf) {
@@ -164,13 +168,26 @@ func (hv *HelpView) Show(scr *ScreenBuf) {
 	}
 }
 
+// TextArea reports the inclusive screen rectangle help text is drawn into,
+// sticky header rows included. It leaves out the frame and the blank padding
+// column inside each vertical border; the scrollbar sits on the right border
+// itself, so it never narrows this area. A host painting over help text (f4
+// highlights search matches) takes the text origin from here instead of
+// assuming the padding.
+func (hv *HelpView) TextArea() (x1, y1, x2, y2 int) {
+	l := hv.layout()
+	return l.contentX1, l.contentY1, l.contentX2, l.contentY2
+}
+
 func (hv *HelpView) layout() helpViewLayout {
 	l := helpViewLayout{
-		contentX1:  hv.X1 + 2,
-		contentY1:  hv.Y1 + 1,
-		contentX2:  hv.X2 - 2,
-		contentY2:  hv.Y2 - 1,
-		scrollBarX: hv.X2 - 2,
+		contentX1: hv.X1 + 2,
+		contentY1: hv.Y1 + 1,
+		contentX2: hv.X2 - 2,
+		contentY2: hv.Y2 - 1,
+		// far2l draws the help scrollbar on the right frame column
+		// (ScrollBarEx(X2, ...) in help.cpp), not inside the window.
+		scrollBarX: hv.X2,
 	}
 	stickyRows := 0
 	if hv.current != nil {
@@ -183,9 +200,6 @@ func (hv *HelpView) layout() helpViewLayout {
 	if hv.current != nil {
 		totalScrollable := len(hv.current.Lines) - stickyRows
 		l.showScrollBar = hv.scrollBar != nil && totalScrollable > l.contentHeight
-	}
-	if l.showScrollBar {
-		l.contentX2--
 	}
 	l.contentWidth = l.contentX2 - l.contentX1 + 1
 	return l
