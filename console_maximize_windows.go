@@ -19,23 +19,85 @@ import (
 // the viewport, so a bare SC_MAXIMIZE has no room to grow into. Far grows the
 // buffer to GetLargestConsoleWindowSize; so does this, before the window is
 // maximized, and then brings the buffer down to the viewport the maximized
-// or restored window actually has, through the same crash-safe sequence the
-// alternate screen uses (planFit, f4 #397).
+// window actually has, through the same crash-safe sequence the alternate
+// screen uses (planFit, f4 #397).
 //
-// Only a console with a real window of its own qualifies. Under a
-// pseudoconsole (Windows Terminal and the like) GetConsoleWindow answers with
-// a stand-in window, and the caller falls back to the xterm sequence as
-// before.
+// Restoring cannot trust the viewport the restored window shows. At the
+// moment of SC_RESTORE the buffer is still the size of the maximized
+// viewport, so the restored window is too small for it and conhost puts
+// scroll bars into it: its viewport is the client area minus the bars
+// (SCREEN_INFORMATION::_CalculateViewportSize), and with "Wrap text output
+// on resize" on it also cuts the buffer width to that (_AdjustScreenBuffer;
+// both in microsoft/terminal's conhost source).
+// Fitting the buffer to that viewport made the window a vertical scroll bar
+// narrower on every Alt+F9 pair -- 120x30 came back as 118x30, and 80x25 as
+// 78, then 76 (f4 #199). Far keeps the size the window had before it was
+// maximized for exactly this reason (interf.cpp, SaveNonMaximisedBufferSize:
+// "it could be less than previous because of horizontal scrollbar") and
+// restores to that. So does this, as long as the restored window is the one
+// that size was taken from; see restoreViewport.
+//
+// A console with a real window of its own is handled here. Under a
+// pseudoconsole GetConsoleWindow answers with a PseudoConsoleWindow that is
+// never shown; the window the user sees is the terminal's, which conpty makes
+// the owner of that pseudo window (ConptyReparentPseudoConsole; Windows
+// Terminal does this for every tab). Far asks that owner to maximize
+// (far/console.cpp, console::GetWindow), and so does this. The terminal then
+// resizes the pseudoconsole, and the new size reaches vtui as any other
+// terminal resize does, so nothing here touches the buffer on that path.
+// Without an owner the caller falls back to the xterm sequence as before.
 
 var (
 	procGetLargestConsoleWindowSize = kernel32.NewProc("GetLargestConsoleWindowSize")
 	procIsZoomedConsole             = user32.NewProc("IsZoomed")
 	procSendMessageWConsole         = user32.NewProc("SendMessageW")
+	procPostMessageWConsole         = user32.NewProc("PostMessageW")
+	procGetWindowConsole            = user32.NewProc("GetWindow")
+	procGetWindowRectConsole        = user32.NewProc("GetWindowRect")
 )
+
+const gwOwner = 4 // GW_OWNER
+
+// consoleNormalWindow is what the console looked like right before Alt+F9
+// maximized it: the viewport, and the outer size of the window that viewport
+// was in. Guarded by conhostAltMu.
+type consoleNormalWindow struct {
+	cols, rows int
+	winW, winH int32 // GetWindowRect size, in pixels
+	set        bool
+}
+
+var consoleBeforeMaximize consoleNormalWindow
+
+// restoreViewport chooses the size the buffer is fitted to after SC_RESTORE.
+//
+// The size saved before maximizing is used only when the restored window has
+// exactly the outer size it had then, which is what makes that viewport the
+// one this window holds without scroll bars. When it does not -- nothing was
+// saved because the window was maximized some other way, or it was restored,
+// resized and maximized again in between -- the saved size belongs to another
+// window geometry, and the viewport conhost reports is all there is.
+func restoreViewport(saved consoleNormalWindow, winW, winH int32, afterW, afterH int) (w, h int, fromSaved bool) {
+	if saved.set && saved.cols > 0 && saved.rows > 0 && saved.winW == winW && saved.winH == winH {
+		return saved.cols, saved.rows, true
+	}
+	return afterW, afterH, false
+}
+
+func consoleWindowOuterSize(hwnd uintptr) (int32, int32, bool) {
+	var r win32Rect
+	if ok, _, _ := procGetWindowRectConsole.Call(hwnd, uintptr(unsafe.Pointer(&r))); ok == 0 {
+		return 0, 0, false
+	}
+	return r.right - r.left, r.bottom - r.top, true
+}
 
 func toggleConsoleMaximizedOS() bool {
 	if !classicConsoleWindow() {
-		DebugLog("CONSOLE: toggle maximized: no classic console window, not handled")
+		if owner := pseudoConsoleOwner(); owner != 0 {
+			return toggleTerminalWindowMaximized(owner)
+		}
+		DebugLog("CONSOLE: toggle maximized: no classic console window and no pseudoconsole owner, not handled")
 		return false
 	}
 	hwnd, _, _ := procGetConsoleWindowAlt.Call()
@@ -80,8 +142,15 @@ func toggleConsoleMaximizedOS() bool {
 				procSetConsoleScreenBufferSize.Call(uintptr(handle), coordArg(grown))
 			}
 		}
-		DebugLog("CONSOLE: toggle maximized: maximizing, viewport %dx%d, buffer %dx%d, largest window %dx%d",
-			bw, bh, before.dwSize.X, before.dwSize.Y, lw, lh)
+		// The window size is taken after the grow, right before the
+		// maximize, so it is the window SC_RESTORE later brings back if
+		// nothing else resizes it in between.
+		consoleBeforeMaximize = consoleNormalWindow{}
+		if ww, wh, ok := consoleWindowOuterSize(hwnd); ok {
+			consoleBeforeMaximize = consoleNormalWindow{cols: bw, rows: bh, winW: ww, winH: wh, set: true}
+		}
+		DebugLog("CONSOLE: toggle maximized: maximizing, viewport %dx%d, buffer %dx%d, largest window %dx%d, window %dx%d px",
+			bw, bh, before.dwSize.X, before.dwSize.Y, lw, lh, consoleBeforeMaximize.winW, consoleBeforeMaximize.winH)
 	} else {
 		DebugLog("CONSOLE: toggle maximized: restoring, viewport %dx%d, buffer %dx%d",
 			bw, bh, before.dwSize.X, before.dwSize.Y)
@@ -98,6 +167,58 @@ func toggleConsoleMaximizedOS() bool {
 	nowZoomed, _, _ := procIsZoomedConsole.Call(hwnd)
 	DebugLog("CONSOLE: toggle maximized: after the command IsZoomed=%v, viewport %dx%d, buffer %dx%d",
 		nowZoomed != 0, aw, ah, after.dwSize.X, after.dwSize.Y)
-	fitConsoleBuffer(handle, aw, ah)
+
+	tw, th := aw, ah
+	if cmd == scRestore {
+		ww, wh, _ := consoleWindowOuterSize(hwnd)
+		var fromSaved bool
+		tw, th, fromSaved = restoreViewport(consoleBeforeMaximize, ww, wh, aw, ah)
+		if fromSaved {
+			DebugLog("CONSOLE: toggle maximized: restoring to the viewport before maximizing, %dx%d (window %dx%d px)",
+				tw, th, ww, wh)
+		} else {
+			DebugLog("CONSOLE: toggle maximized: no size saved for this window (saved=%v, saved window %dx%d px, now %dx%d px), keeping the restored viewport %dx%d",
+				consoleBeforeMaximize.set, consoleBeforeMaximize.winW, consoleBeforeMaximize.winH, ww, wh, tw, th)
+		}
+		consoleBeforeMaximize = consoleNormalWindow{}
+	}
+	fitConsoleBuffer(handle, tw, th)
+	return true
+}
+
+// pseudoConsoleOwner returns the window that owns this process's pseudo
+// console window -- the terminal's own window under Windows Terminal -- or 0
+// when the console is not a pseudoconsole or nothing owns it.
+func pseudoConsoleOwner() uintptr {
+	h, _, _ := procGetConsoleWindowAlt.Call()
+	if h == 0 {
+		return 0
+	}
+	var buf [64]uint16
+	n, _, _ := procGetClassNameWAlt.Call(h, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	if n == 0 || syscall.UTF16ToString(buf[:n]) != "PseudoConsoleWindow" {
+		return 0
+	}
+	owner, _, _ := procGetWindowConsole.Call(h, gwOwner)
+	return owner
+}
+
+// toggleTerminalWindowMaximized maximizes or restores the terminal window on
+// the far side of a pseudoconsole. The message is posted, not sent: the
+// window belongs to another process, and nothing here waits on its answer --
+// the size change comes back as a pseudoconsole resize.
+func toggleTerminalWindowMaximized(owner uintptr) bool {
+	zoomed, _, _ := procIsZoomedConsole.Call(owner)
+	cmd, name := uintptr(scMaximize), "SC_MAXIMIZE"
+	if zoomed != 0 {
+		cmd, name = scRestore, "SC_RESTORE"
+	}
+	if ok, _, err := procPostMessageWConsole.Call(owner, wmSysCommand, cmd, 0); ok == 0 {
+		DebugLog("CONSOLE: toggle maximized: pseudoconsole owner %#x, IsZoomed=%v, posting %s failed: %v",
+			owner, zoomed != 0, name, err)
+		return false
+	}
+	DebugLog("CONSOLE: toggle maximized: pseudoconsole owner %#x, IsZoomed=%v, posted %s",
+		owner, zoomed != 0, name)
 	return true
 }

@@ -2323,11 +2323,13 @@ type windowMaximizer interface {
 // ToggleWindowMaximized is far2l's Alt+F9 (ToggleVideoMode): maximize the
 // window f4 is drawn in, or restore it when it is maximized already.
 //
-// A GUI backend toggles its own window. In a terminal, the only window within
-// reach is a classic Windows console window, which is maximized the way Far
-// Manager does it. It reports false when nothing could be asked -- a
-// terminal emulator, a pseudoconsole -- so the caller can fall back to
-// something weaker, like the xterm resize sequence.
+// A GUI backend toggles its own window. In a terminal, the windows within
+// reach are a classic Windows console window and, under a pseudoconsole, the
+// terminal window that owns it (Windows Terminal); both are maximized the way
+// Far Manager does it. It reports false when nothing could be asked -- a
+// terminal emulator on another platform, a pseudoconsole without an owner --
+// so the caller can fall back to something weaker, like the xterm resize
+// sequence.
 func (fm *frameManager) ToggleWindowMaximized() bool {
 	if fm.scr != nil && fm.scr.Renderer != nil {
 		if r, ok := fm.scr.Renderer.(windowMaximizer); ok {
