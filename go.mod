@@ -51,5 +51,3 @@ replace github.com/ebitengine/purego => github.com/unxed/pureffi v0.1.19
 replace github.com/go-webgpu/goffi => github.com/unxed/goffi v0.1.8
 
 replace github.com/ebitengine/hideconsole => ./internal/hideconsole
-
-replace github.com/neurlang/wayland => github.com/unxed/wayland v0.0.0-20260906012106-4096eafdd7f4
