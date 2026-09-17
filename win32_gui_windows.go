@@ -580,7 +580,20 @@ func (h *Win32GuiHost) handleMessage(hwnd syscall.Handle, msg uint32, wParam, lP
 		painted := false
 		if hdc != 0 {
 			if h.renderer != nil {
-				painted = h.renderer.blitTo(hdc)
+				var frameW, frameH int
+				frameW, frameH, painted = h.renderer.blitTo(hdc)
+				if painted {
+					// The frame covers whole cells only; clear what lies
+					// outside it, or pixels from an earlier, larger frame
+					// stay in the partial right column and bottom row
+					// (f4 #283).
+					var client win32Rect
+					procGetClientRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&client)))
+					for _, m := range frameMarginRects(int(client.right), int(client.bottom), frameW, frameH) {
+						rc := win32Rect{left: int32(m.x0), top: int32(m.y0), right: int32(m.x1), bottom: int32(m.y1)}
+						fillRectBlack(hdc, &rc)
+					}
+				}
 			}
 			if !painted {
 				// BeginPaint has already validated the update region, so
@@ -941,22 +954,23 @@ func fillRectBlack(hdc uintptr, rc *win32Rect) {
 // a plain GDI memory DC + BitBlt is the standard, reliable pattern for
 // presenting a software-rendered bitmap into a window. See f4 issue #514.
 //
-// It reports whether pixels were handed to the DC. A false return means the
-// caller must keep the paint pending rather than treat the window as drawn.
-func (r *Win32GuiRenderer) blitTo(hdc uintptr) bool {
+// It returns the size of the frame it blitted and whether pixels were handed
+// to the DC. A false return means the caller must keep the paint pending
+// rather than treat the window as drawn.
+func (r *Win32GuiRenderer) blitTo(hdc uintptr) (w, h int, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	w, h, ok := r.syncBGRALocked()
+	w, h, ok = r.syncBGRALocked()
 	if !ok || w <= 0 || h <= 0 {
-		return false
+		return 0, 0, false
 	}
 
 	if r.memDC == 0 || r.memW != w || r.memH != h {
 		r.releaseMemDCLocked()
 		memDC, _, _ := procCreateCompatDC.Call(hdc)
 		if memDC == 0 {
-			return false
+			return 0, 0, false
 		}
 		// A device-INDEPENDENT bitmap (DIB section): unlike a DDB from
 		// CreateCompatibleBitmap, its pixel buffer is always writable
@@ -974,7 +988,7 @@ func (r *Win32GuiRenderer) blitTo(hdc uintptr) bool {
 		)
 		if bmp == 0 {
 			procDeleteDC.Call(memDC)
-			return false
+			return 0, 0, false
 		}
 		procSelectObject.Call(memDC, bmp)
 		r.memDC, r.memBitmap = memDC, bmp
@@ -986,7 +1000,7 @@ func (r *Win32GuiRenderer) blitTo(hdc uintptr) bool {
 	// exactly the layout syncBGRALocked produced -- so copy pixels straight
 	// into the DIB memory and skip SetDIBits entirely.
 	if r.memBits == 0 || len(r.bgraBuf) < w*h*4 {
-		return false
+		return 0, 0, false
 	}
 	dst := unsafe.Slice((*byte)(unsafe.Pointer(r.memBits)), w*h*4)
 	copy(dst, r.bgraBuf[:w*h*4])
@@ -994,7 +1008,7 @@ func (r *Win32GuiRenderer) blitTo(hdc uintptr) bool {
 	const srcCopyRop = srcCopy
 	ret, _, _ := procBitBlt.Call(hdc, 0, 0, uintptr(w), uintptr(h), r.memDC, 0, 0, srcCopyRop)
 	procGdiFlush.Call()
-	return ret != 0
+	return w, h, ret != 0
 }
 
 // releaseMemDCLocked frees the offscreen memory DC and bitmap. Caller must

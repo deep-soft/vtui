@@ -163,3 +163,36 @@ func TestWin32Gui_PostQuitState(t *testing.T) {
 	// Calling PostQuit again should be safe and idempotent
 	host.PostQuit()
 }
+
+// TestWin32Gui_FrameMarginRects checks the pixels WM_PAINT has to clear besides
+// the blitted frame, which covers whole cells only (f4 #283).
+func TestWin32Gui_FrameMarginRects(t *testing.T) {
+	tests := []struct {
+		name                             string
+		clientW, clientH, frameW, frameH int
+		want                             []pixelRect
+	}{
+		{"cell aligned", 1000, 570, 1000, 570, nil},
+		{"partial column and row", 1005, 580, 1000, 570, []pixelRect{{1000, 0, 1005, 580}, {0, 570, 1000, 580}}},
+		{"partial column only", 1005, 570, 1000, 570, []pixelRect{{1000, 0, 1005, 570}}},
+		{"partial row only", 1000, 580, 1000, 570, []pixelRect{{0, 570, 1000, 580}}},
+		// A frame still composed for the maximized grid covers the whole
+		// restored client area: nothing to clear yet.
+		{"stale larger frame", 1005, 580, 1600, 969, nil},
+		{"wider but shorter frame", 1005, 580, 1600, 570, []pixelRect{{0, 570, 1005, 580}}},
+		{"no client area", 0, 0, 1000, 570, nil},
+	}
+	for _, tt := range tests {
+		got := frameMarginRects(tt.clientW, tt.clientH, tt.frameW, tt.frameH)
+		if len(got) != len(tt.want) {
+			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
+				break
+			}
+		}
+	}
+}
