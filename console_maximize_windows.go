@@ -3,6 +3,7 @@
 package vtui
 
 import (
+	"fmt"
 	"syscall"
 	"unsafe"
 
@@ -123,6 +124,9 @@ func toggleConsoleMaximizedOS() bool {
 	conhostAltMu.Lock()
 	defer conhostAltMu.Unlock()
 
+	seq := consoleToggleSeq.Add(1)
+	logConsoleState(fmt.Sprintf("toggle #%d before", seq), handle, hwnd)
+
 	var before consoleScreenBufferInfo
 	if ok, _, _ := procGetConsoleScreenBufferInfo.Call(uintptr(handle), uintptr(unsafe.Pointer(&before))); ok == 0 {
 		DebugLog("CONSOLE: toggle maximized: GetConsoleScreenBufferInfo failed")
@@ -157,6 +161,7 @@ func toggleConsoleMaximizedOS() bool {
 	}
 
 	procSendMessageWConsole.Call(hwnd, wmSysCommand, cmd, 0)
+	logConsoleState(fmt.Sprintf("toggle #%d after the command", seq), handle, hwnd)
 
 	var after consoleScreenBufferInfo
 	if ok, _, _ := procGetConsoleScreenBufferInfo.Call(uintptr(handle), uintptr(unsafe.Pointer(&after))); ok == 0 {
@@ -183,6 +188,8 @@ func toggleConsoleMaximizedOS() bool {
 		consoleBeforeMaximize = consoleNormalWindow{}
 	}
 	fitConsoleBuffer(handle, tw, th)
+	logConsoleState(fmt.Sprintf("toggle #%d after the fit", seq), handle, hwnd)
+	logConsoleStateLater(fmt.Sprintf("toggle #%d +%v", seq, consoleLateSnapshot))
 	return true
 }
 

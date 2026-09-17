@@ -201,15 +201,28 @@ func fitConsoleBuffer(handle syscall.Handle, w, h int) {
 		return
 	}
 	plan := planFit(info, w, h)
+	if len(plan) > 0 {
+		DebugLog("CONSOLE: fit to %dx%d from buffer %dx%d, srWindow L%d T%d R%d B%d, cursor %d,%d: %d steps",
+			w, h, info.dwSize.X, info.dwSize.Y,
+			info.srWindow.Left, info.srWindow.Top, info.srWindow.Right, info.srWindow.Bottom,
+			info.dwCursorPosition.X, info.dwCursorPosition.Y, len(plan))
+	}
 	for _, step := range plan {
+		var ok uintptr
+		var err error
 		switch step.op {
 		case fitGrowBuffer, fitSizeBuffer:
-			procSetConsoleScreenBufferSize.Call(uintptr(handle), coordArg(step.coord))
+			ok, _, err = procSetConsoleScreenBufferSize.Call(uintptr(handle), coordArg(step.coord))
 		case fitMoveCursor:
-			procSetConsoleCursorPosition.Call(uintptr(handle), coordArg(step.coord))
+			ok, _, err = procSetConsoleCursorPosition.Call(uintptr(handle), coordArg(step.coord))
 		case fitWindow:
 			rect := SmallRect{Right: step.coord.X, Bottom: step.coord.Y}
-			procSetConsoleWindowInfo.Call(uintptr(handle), uintptr(1), uintptr(unsafe.Pointer(&rect)))
+			ok, _, err = procSetConsoleWindowInfo.Call(uintptr(handle), uintptr(1), uintptr(unsafe.Pointer(&rect)))
+		}
+		if ok != 0 {
+			DebugLog("CONSOLE: fit to %dx%d: %s %d,%d ok", w, h, fitOpLabel(step.op), step.coord.X, step.coord.Y)
+		} else {
+			DebugLog("CONSOLE: fit to %dx%d: %s %d,%d FAILED: %v", w, h, fitOpLabel(step.op), step.coord.X, step.coord.Y, err)
 		}
 	}
 }
