@@ -122,6 +122,12 @@ func logPseudoConsoleLookup(owner uintptr) {
 	h, _, _ := procGetConsoleWindowAlt.Call()
 	DebugLog("CONSOLE: pseudoconsole lookup: GetConsoleWindow %#x class %q, GW_OWNER %#x class %q pid %d",
 		h, consoleWindowClass(h), owner, consoleWindowClass(owner), consoleWindowPID(owner))
+	start := consoleWindowStart
+	if start.hwnd != h || start.owner != owner {
+		DebugLog("CONSOLE: pseudoconsole lookup: at startup, before this process made a pseudoconsole of its own, GetConsoleWindow was %#x class %q made by pid %d %q, GW_OWNER %#x class %q",
+			start.hwnd, start.class, start.pid, processImage(start.pid),
+			start.owner, start.ownerClass)
+	}
 	if owner != 0 || h == 0 {
 		return
 	}
@@ -261,4 +267,40 @@ func logTerminalWindowStateLater(tag string, hwnd uintptr) {
 		time.Sleep(consoleLateSnapshot)
 		logTerminalWindowState(tag, hwnd)
 	}()
+}
+
+// consoleWindowStart is what GetConsoleWindow answered when f4 started.
+//
+// It is taken before main runs, so before anything in this process creates a
+// pseudoconsole of its own. f4 does create one, for the shell it hosts, and
+// it loads the ConPTY package, whose console host runs inside this process
+// and makes its own PseudoConsoleWindow here (f4 #199: a run where
+// GetConsoleWindow later answered with a window made by f4's own process,
+// owned by nothing, while f4's output was plainly going to a Windows
+// Terminal window, which the xterm resize sequence resized). Comparing the
+// two answers says whether the window Alt+F9 looks at is still the one the
+// process was started with.
+type consoleWindowSnapshot struct {
+	hwnd       uintptr
+	class      string
+	pid        uint32
+	owner      uintptr
+	ownerClass string
+}
+
+var consoleWindowStart = takeConsoleWindowSnapshot()
+
+func takeConsoleWindowSnapshot() consoleWindowSnapshot {
+	h, _, _ := procGetConsoleWindowAlt.Call()
+	if h == 0 {
+		return consoleWindowSnapshot{}
+	}
+	owner, _, _ := procGetWindowConsole.Call(h, gwOwner)
+	return consoleWindowSnapshot{
+		hwnd:       h,
+		class:      consoleWindowClass(h),
+		pid:        consoleWindowPID(h),
+		owner:      owner,
+		ownerClass: consoleWindowClass(owner),
+	}
 }
