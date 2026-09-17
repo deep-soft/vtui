@@ -4,6 +4,8 @@ package vtui
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -38,6 +40,8 @@ var (
 	procMonitorFromWindowConsole  = user32.NewProc("MonitorFromWindow")
 	procGetMonitorInfoWConsole    = user32.NewProc("GetMonitorInfoW")
 	procGetWindowThreadProcessID  = user32.NewProc("GetWindowThreadProcessId")
+	procGetAncestorConsole        = user32.NewProc("GetAncestor")
+	procGetConsoleProcessList     = kernel32.NewProc("GetConsoleProcessList")
 )
 
 const (
@@ -118,6 +122,70 @@ func logPseudoConsoleLookup(owner uintptr) {
 	h, _, _ := procGetConsoleWindowAlt.Call()
 	DebugLog("CONSOLE: pseudoconsole lookup: GetConsoleWindow %#x class %q, GW_OWNER %#x class %q pid %d",
 		h, consoleWindowClass(h), owner, consoleWindowClass(owner), consoleWindowPID(owner))
+	if owner != 0 || h == 0 {
+		return
+	}
+	// Nothing owns the pseudo window. What follows is where this console
+	// came from: which process made that window, what the root owner chain
+	// says, whether Windows Terminal started this process (it sets
+	// WT_SESSION for what it launches), who started f4, and which processes
+	// share the console.
+	rootOwner, _, _ := procGetAncestorConsole.Call(h, gaRootOwner)
+	hostPID := consoleWindowPID(h)
+	_, wtSession := os.LookupEnv("WT_SESSION")
+	self := uint32(os.Getpid())
+	parents := processParents()
+	parent := parents[self]
+	DebugLog("CONSOLE: pseudoconsole lookup: no owner; window made by pid %d %q, GA_ROOTOWNER %#x class %q, WT_SESSION set=%v, f4 pid %d started by pid %d %q",
+		hostPID, processImage(hostPID), rootOwner, consoleWindowClass(rootOwner), wtSession,
+		self, parent, processImage(parent))
+	var pids [32]uint32
+	n, _, _ := procGetConsoleProcessList.Call(uintptr(unsafe.Pointer(&pids[0])), uintptr(len(pids)))
+	if n > uintptr(len(pids)) {
+		n = uintptr(len(pids))
+	}
+	var list strings.Builder
+	for _, pid := range pids[:n] {
+		fmt.Fprintf(&list, " %d %q (parent %d);", pid, processImage(pid), parents[pid])
+	}
+	DebugLog("CONSOLE: pseudoconsole lookup: processes on this console:%s", list.String())
+}
+
+const gaRootOwner = 3 // GA_ROOTOWNER
+
+// processImage is the full path of a process's executable, or "" when it
+// cannot be read.
+func processImage(pid uint32) string {
+	if pid == 0 {
+		return ""
+	}
+	proc, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return ""
+	}
+	defer windows.CloseHandle(proc)
+	var buf [windows.MAX_PATH]uint16
+	size := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(proc, 0, &buf[0], &size); err != nil {
+		return ""
+	}
+	return windows.UTF16ToString(buf[:size])
+}
+
+// processParents maps every running process to the process that started it.
+func processParents() map[uint32]uint32 {
+	parents := map[uint32]uint32{}
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return parents
+	}
+	defer windows.CloseHandle(snap)
+	var pe windows.ProcessEntry32
+	pe.Size = uint32(unsafe.Sizeof(pe))
+	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
+		parents[pe.ProcessID] = pe.ParentProcessID
+	}
+	return parents
 }
 
 func consoleWindowClass(hwnd uintptr) string {
