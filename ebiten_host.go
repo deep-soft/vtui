@@ -4,6 +4,7 @@ package vtui
 
 import (
 	"fmt"
+	"image/color"
 	"io"
 	"os"
 	"sync"
@@ -239,11 +240,32 @@ type ebitenGame struct {
 	host *EbitenHost
 	tex  *ebiten.Image
 
-	// presented says the screen already holds a frame. Ebitengine is a fixed
-	// tick loop with no render-on-demand, but with clearing disabled it keeps
-	// the previous contents, so once a frame is up an unchanged UI needs
-	// neither an upload nor a blit and Draw becomes free.
-	presented bool
+	// target is the offscreen image the last frame was drawn into, and
+	// drawnW by drawnH the size of that frame. Ebitengine is a fixed tick loop
+	// with no render-on-demand, but with clearing disabled it keeps the
+	// offscreen contents, so while the target and the frame stay the same an
+	// unchanged UI needs neither an upload nor a blit and Draw becomes free.
+	target         *ebiten.Image
+	drawnW, drawnH int
+}
+
+// planEbitenDraw decides what Draw has to do with the offscreen it is given.
+//
+// The offscreen is window sized, the frame covers whole cells only, and the
+// offscreen is not cleared between frames. Whatever lands outside the frame
+// therefore stays there until the offscreen is cleared, and a frame can land
+// there: the renderer runs on the FrameManager goroutine, so the first Draw
+// after Ebitengine has recreated the offscreen for a smaller window can still
+// get the frame rendered for the larger one (f4 #283). The smaller frames
+// that follow cover only the cells, and the partial right column and bottom
+// row went on showing the larger layout.
+//
+// So the offscreen is cleared whenever it is not the one the previous frame
+// went into, or the frame size differs from that frame; clearing implies a
+// redraw. newTarget reports that the offscreen is not the previous target.
+func planEbitenDraw(newTarget bool, frameW, frameH, drawnW, drawnH int, changed bool) (draw, wipe bool) {
+	wipe = newTarget || frameW != drawnW || frameH != drawnH
+	return changed || wipe, wipe
 }
 
 func (g *ebitenGame) Update() error {
@@ -511,19 +533,30 @@ func (g *ebitenGame) Draw(screen *ebiten.Image) {
 	if g.tex == nil || g.tex.Bounds().Dx() != w || g.tex.Bounds().Dy() != h {
 		g.tex = ebiten.NewImage(w, h)
 		changed = true
-		g.presented = false
 	}
 
-	// Nothing moved and the screen already shows the last frame: skip both the
-	// upload and the blit. This is what keeps an idle file manager off the GPU.
-	if !changed && g.presented {
+	newTarget := screen != g.target
+	if newTarget {
+		sb := screen.Bounds()
+		DebugLog("EBITEN_HOST: offscreen %dx%d, frame %dx%d", sb.Dx(), sb.Dy(), w, h)
+	}
+
+	// Nothing moved and the offscreen already shows the last frame: skip both
+	// the upload and the blit. This is what keeps an idle file manager off the
+	// GPU.
+	draw, wipe := planEbitenDraw(newTarget, w, h, g.drawnW, g.drawnH, changed)
+	if !draw {
 		return
 	}
 	if changed {
 		g.tex.WritePixels(pix)
 	}
+	if wipe {
+		// Opaque black, like the partial cells of the other GUI backends.
+		screen.Fill(color.Black)
+	}
 	screen.DrawImage(g.tex, nil)
-	g.presented = true
+	g.target, g.drawnW, g.drawnH = screen, w, h
 }
 
 // Layout maps the window size onto the character grid and tells the running
@@ -656,8 +689,10 @@ func RunEbitenHost(cols, rows int, fontName string, fontSize float64, setupApp f
 	ebiten.SetWindowTitle(WindowTitleWithBackend(AppName))
 	ebiten.SetWindowSize(cols*cellW/scale, rows*cellH/scale)
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
-	// The screen is fully repainted from our own framebuffer every frame, so
-	// letting Ebitengine clear it first would only waste a pass.
+	// Draw repaints the offscreen from our own framebuffer and clears it
+	// itself whenever the offscreen or the frame size changes (see
+	// planEbitenDraw), so letting Ebitengine clear it every frame would only
+	// waste a pass.
 	ebiten.SetScreenClearedEveryFrame(false)
 
 	game := &ebitenGame{host: host}
