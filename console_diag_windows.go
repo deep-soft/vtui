@@ -32,8 +32,12 @@ import (
 // later.
 
 var (
-	procGetClientRectConsole  = user32.NewProc("GetClientRect")
-	procGetWindowLongWConsole = user32.NewProc("GetWindowLongW")
+	procGetClientRectConsole      = user32.NewProc("GetClientRect")
+	procGetWindowLongWConsole     = user32.NewProc("GetWindowLongW")
+	procGetWindowPlacementConsole = user32.NewProc("GetWindowPlacement")
+	procMonitorFromWindowConsole  = user32.NewProc("MonitorFromWindow")
+	procGetMonitorInfoWConsole    = user32.NewProc("GetMonitorInfoW")
+	procGetWindowThreadProcessID  = user32.NewProc("GetWindowThreadProcessId")
 )
 
 const (
@@ -101,4 +105,92 @@ func fitOpLabel(op fitOp) string {
 		return "size buffer"
 	}
 	return fmt.Sprintf("op%d", int(op))
+}
+
+// Under a pseudoconsole (Windows Terminal) the window Alt+F9 acts on is the
+// terminal's, not the console's. These lines record which window that was,
+// and where it was and what state it was in before the command and some time
+// after it, next to the monitor's work area -- enough to tell a maximize from
+// a plain resize of the window from where it stood.
+
+// logPseudoConsoleLookup records what pseudoConsoleOwner looked at.
+func logPseudoConsoleLookup(owner uintptr) {
+	h, _, _ := procGetConsoleWindowAlt.Call()
+	DebugLog("CONSOLE: pseudoconsole lookup: GetConsoleWindow %#x class %q, GW_OWNER %#x class %q pid %d",
+		h, consoleWindowClass(h), owner, consoleWindowClass(owner), consoleWindowPID(owner))
+}
+
+func consoleWindowClass(hwnd uintptr) string {
+	if hwnd == 0 {
+		return ""
+	}
+	var buf [128]uint16
+	n, _, _ := procGetClassNameWAlt.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	if n == 0 {
+		return ""
+	}
+	return syscall.UTF16ToString(buf[:n])
+}
+
+func consoleWindowPID(hwnd uintptr) uint32 {
+	if hwnd == 0 {
+		return 0
+	}
+	var pid uint32
+	procGetWindowThreadProcessID.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	return pid
+}
+
+// win32WindowPlacement is WINDOWPLACEMENT.
+type win32WindowPlacement struct {
+	length           uint32
+	flags            uint32
+	showCmd          uint32
+	ptMinPosition    win32Point
+	ptMaxPosition    win32Point
+	rcNormalPosition win32Rect
+}
+
+// win32MonitorInfo is MONITORINFO.
+type win32MonitorInfo struct {
+	cbSize    uint32
+	rcMonitor win32Rect
+	rcWork    win32Rect
+	dwFlags   uint32
+}
+
+const monitorDefaultToNearest = 2 // MONITOR_DEFAULTTONEAREST
+
+func formatWin32Rect(r win32Rect) string {
+	return fmt.Sprintf("L%d T%d R%d B%d (%dx%d)", r.left, r.top, r.right, r.bottom, r.right-r.left, r.bottom-r.top)
+}
+
+// logTerminalWindowState writes one line about the terminal window hwnd:
+// its rectangle, IsZoomed, the show command and normal position from its
+// placement, and the monitor it is on with that monitor's work area.
+func logTerminalWindowState(tag string, hwnd uintptr) {
+	var wr win32Rect
+	wrOK, _, _ := procGetWindowRectConsole.Call(hwnd, uintptr(unsafe.Pointer(&wr)))
+	zoomed, _, _ := procIsZoomedConsole.Call(hwnd)
+	wp := win32WindowPlacement{length: uint32(unsafe.Sizeof(win32WindowPlacement{}))}
+	wpOK, _, _ := procGetWindowPlacementConsole.Call(hwnd, uintptr(unsafe.Pointer(&wp)))
+	mi := win32MonitorInfo{cbSize: uint32(unsafe.Sizeof(win32MonitorInfo{}))}
+	monitor, _, _ := procMonitorFromWindowConsole.Call(hwnd, monitorDefaultToNearest)
+	miOK := uintptr(0)
+	if monitor != 0 {
+		miOK, _, _ = procGetMonitorInfoWConsole.Call(monitor, uintptr(unsafe.Pointer(&mi)))
+	}
+	DebugLog("CONSOLE: terminal window %s: hwnd %#x, window %s (ok=%v), IsZoomed=%v, placement showCmd=%d normal %s (ok=%v), monitor %s work area %s (ok=%v)",
+		tag, hwnd, formatWin32Rect(wr), wrOK != 0, zoomed != 0,
+		wp.showCmd, formatWin32Rect(wp.rcNormalPosition), wpOK != 0,
+		formatWin32Rect(mi.rcMonitor), formatWin32Rect(mi.rcWork), miOK != 0)
+}
+
+// logTerminalWindowStateLater takes the same snapshot after the terminal has
+// had time to act on the posted command and resize the pseudoconsole.
+func logTerminalWindowStateLater(tag string, hwnd uintptr) {
+	go func() {
+		time.Sleep(consoleLateSnapshot)
+		logTerminalWindowState(tag, hwnd)
+	}()
 }

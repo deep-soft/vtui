@@ -95,7 +95,9 @@ func consoleWindowOuterSize(hwnd uintptr) (int32, int32, bool) {
 
 func toggleConsoleMaximizedOS() bool {
 	if !classicConsoleWindow() {
-		if owner := pseudoConsoleOwner(); owner != 0 {
+		owner := pseudoConsoleOwner()
+		logPseudoConsoleLookup(owner)
+		if owner != 0 {
 			return toggleTerminalWindowMaximized(owner)
 		}
 		DebugLog("CONSOLE: toggle maximized: no classic console window and no pseudoconsole owner, not handled")
@@ -215,6 +217,10 @@ func pseudoConsoleOwner() uintptr {
 // window belongs to another process, and nothing here waits on its answer --
 // the size change comes back as a pseudoconsole resize.
 func toggleTerminalWindowMaximized(owner uintptr) bool {
+	seq := consoleToggleSeq.Add(1)
+	logTerminalWindowState(fmt.Sprintf("terminal toggle #%d before the command", seq), owner)
+	defer logTerminalWindowStateLater(fmt.Sprintf("terminal toggle #%d +%v", seq, consoleLateSnapshot), owner)
+
 	zoomed, _, _ := procIsZoomedConsole.Call(owner)
 	cmd, name := uintptr(scMaximize), "SC_MAXIMIZE"
 	if zoomed != 0 {
