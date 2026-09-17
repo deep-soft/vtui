@@ -116,9 +116,15 @@ func NewX11Host(cols, rows, cellW, cellH int) (*X11Host, error) {
 	}
 	xproto.CreateColormap(conn, xproto.ColormapAllocNone, cmap, screen.Root, visualID)
 
-	mask := uint32(xproto.CwBackPixel | xproto.CwEventMask | xproto.CwColormap)
+	// Values follow the order of the mask bits. BitGravity NorthWest keeps the
+	// window contents across a resize: with the default Forget gravity the
+	// server discards them and fills the window with the background pixel, so
+	// every configure of a drag-resize is a black flash until the repaint that
+	// follows the resize event lands (f4 #283).
+	mask := uint32(xproto.CwBackPixel | xproto.CwBitGravity | xproto.CwEventMask | xproto.CwColormap)
 	values := []uint32{
 		screen.BlackPixel,
+		uint32(xproto.GravityNorthWest),
 		uint32(xproto.EventMaskKeyPress | xproto.EventMaskKeyRelease |
 			xproto.EventMaskButtonPress | xproto.EventMaskButtonRelease |
 			xproto.EventMaskPointerMotion | xproto.EventMaskExposure |

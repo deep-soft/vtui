@@ -241,12 +241,19 @@ func (h *WaylandHost) Resize(widget *window.Widget, width int32, height int32, p
 	cols, rows := h.cols, h.rows
 	pixelSizeChanged := int(pwidth) != h.imgBuf.Rect.Dx() || int(pheight) != h.imgBuf.Rect.Dy()
 	if pixelSizeChanged {
+		previous := h.imgBuf
 		h.imgBuf = image.NewRGBA(image.Rect(0, 0, int(pwidth), int(pheight)))
 		if !scaleChanged {
 			h.cols = int(pwidth) / h.cellW
 			h.rows = int(pheight) / h.cellH
 		}
 		cols, rows = h.cols, h.rows
+		// The buffer is committed as soon as this configure is handled, well
+		// before FrameManager repaints, so a blank buffer is a black frame on
+		// screen. During a drag-resize the configures outrun the repaints and
+		// the window stays black until the drag ends (f4 #283). Carry the
+		// previous frame over so those commits show the old content instead.
+		carryOverRGBA(h.imgBuf, previous, h.cols*h.cellW, h.rows*h.cellH)
 		h.mu.Unlock()
 
 		if h.reader != nil {
@@ -905,5 +912,26 @@ func (h *WaylandHost) PointerFrame(w *window.Widget, input *window.Input) {
 			WheelDirection:  direction,
 			ControlKeyState: mods,
 		}
+	}
+}
+
+// carryOverRGBA copies the previous frame into a freshly allocated backing
+// image, clipped to the part of the new grid both images cover. Pixels of the
+// partial right column and bottom row outside the grid are left blank: the
+// renderer never paints them, and carrying them over would leave the previous
+// window size showing there.
+func carryOverRGBA(dst, src *image.RGBA, gridW, gridH int) {
+	if dst == nil || src == nil {
+		return
+	}
+	w := min(min(dst.Rect.Dx(), src.Rect.Dx()), gridW)
+	h := min(min(dst.Rect.Dy(), src.Rect.Dy()), gridH)
+	if w <= 0 || h <= 0 {
+		return
+	}
+	for y := 0; y < h; y++ {
+		dstRow := y * dst.Stride
+		srcRow := y * src.Stride
+		copy(dst.Pix[dstRow:dstRow+w*4], src.Pix[srcRow:srcRow+w*4])
 	}
 }

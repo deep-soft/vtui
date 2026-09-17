@@ -3,6 +3,7 @@
 package vtui
 
 import (
+	"image"
 	"io"
 	"testing"
 	"time"
@@ -390,4 +391,51 @@ func TestLogicalWaylandPixelsRoundsToNearest(t *testing.T) {
 	if got := logicalWaylandPixels(1, 3); got != 1 {
 		t.Errorf("logicalWaylandPixels(1, 3) = %d, want 1", got)
 	}
+}
+
+// f4 #283: the new backing image is committed before FrameManager repaints, so
+// it carries the previous frame over instead of showing black. The partial
+// right column and bottom row outside the grid stay blank, because the
+// renderer never paints them.
+func TestCarryOverRGBA(t *testing.T) {
+	fill := func(img *image.RGBA, v uint8) {
+		for i := range img.Pix {
+			img.Pix[i] = v
+		}
+	}
+	at := func(img *image.RGBA, x, y int) uint8 {
+		return img.Pix[y*img.Stride+x*4]
+	}
+
+	// Shrink: window 1005x580 over a 100x30 grid of 10x19 cells, so the grid
+	// covers 1000x570 and the margins are 5 px wide and 10 px tall.
+	src := image.NewRGBA(image.Rect(0, 0, 1068, 601))
+	fill(src, 0x40)
+	dst := image.NewRGBA(image.Rect(0, 0, 1005, 580))
+	carryOverRGBA(dst, src, 1000, 570)
+	if got := at(dst, 999, 569); got != 0x40 {
+		t.Errorf("last grid pixel: got %#x, want the previous frame %#x", got, 0x40)
+	}
+	if got := at(dst, 1000, 100); got != 0 {
+		t.Errorf("right margin: got %#x, want blank", got)
+	}
+	if got := at(dst, 100, 570); got != 0 {
+		t.Errorf("bottom margin: got %#x, want blank", got)
+	}
+
+	// Growth: only the area the previous frame covered is carried over.
+	src = image.NewRGBA(image.Rect(0, 0, 500, 300))
+	fill(src, 0x40)
+	dst = image.NewRGBA(image.Rect(0, 0, 1005, 580))
+	carryOverRGBA(dst, src, 1000, 570)
+	if got := at(dst, 499, 299); got != 0x40 {
+		t.Errorf("carried pixel: got %#x, want %#x", got, 0x40)
+	}
+	if got := at(dst, 500, 299); got != 0 {
+		t.Errorf("newly exposed pixel: got %#x, want blank", got)
+	}
+
+	// A nil image on either side is a no-op rather than a panic.
+	carryOverRGBA(nil, src, 10, 10)
+	carryOverRGBA(dst, nil, 10, 10)
 }
